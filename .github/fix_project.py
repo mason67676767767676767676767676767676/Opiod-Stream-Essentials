@@ -1623,3 +1623,24 @@ data["version"] = "1.0.9"
 meta.write_text(json.dumps(data, indent=2) + chr(10))
 props = root / "gradle.properties"
 props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.9", props.read_text()))
+
+
+# Fix auction page state fields: insert directly after class declaration so the
+# patch does not depend on the formatting of the page field.
+screen = src / "SettingsScreen.java"
+screen_text = screen.read_text()
+class_decl = "public class SettingsScreen extends Screen {"
+fields = class_decl + chr(10) + "    private int auctionDurationChoice = 1;" + chr(10) + "    private int auctionBidChoice = 1;"
+if "private int auctionDurationChoice" not in screen_text:
+    if class_decl not in screen_text:
+        raise RuntimeError("Could not find SettingsScreen class declaration")
+    screen_text = screen_text.replace(class_decl, fields, 1)
+screen.write_text(screen_text)
+
+# Keep the auction dashboard release version synchronized.
+meta = root / "src/main/resources/fabric.mod.json"
+data = json.loads(meta.read_text())
+data["version"] = "1.0.10"
+meta.write_text(json.dumps(data, indent=2) + chr(10))
+props = root / "gradle.properties"
+props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.10", props.read_text()))
