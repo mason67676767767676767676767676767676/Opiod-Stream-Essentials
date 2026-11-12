@@ -1203,3 +1203,25 @@ public class SettingsScreen extends Screen {
 }
 ''')
 
+
+
+# The bundled auction classes must be on the compile classpath as well as inside the final JAR.
+build_file = root / "build.gradle"
+build_text = build_file.read_text()
+if 'compileOnly files("libs/donut-auction-original.jar")' not in build_text:
+    build_text = build_text.replace("dependencies {", 'dependencies {\n    compileOnly files("libs/donut-auction-original.jar")')
+build_file.write_text(build_text)
+
+# Accept the original auction module's optional-currency-symbol payment format.
+ledger = src / "PaymentLedger.java"
+ledger_text = ledger.read_text()
+ledger_text = ledger_text.replace(
+    'Pattern.compile("(?i)\\\\$\\\\s*([0-9][0-9,]*(?:\\\\.[0-9]+)?)\\\\s*([kmbt])?")',
+    'Pattern.compile("(?i)\\\\$?\\\\s*([0-9][0-9,]*(?:\\\\.[0-9]+)?)\\\\s*([kmbt])?")'
+)
+ledger.write_text(ledger_text)
+
+# Use Frosted Glass as the default preset for a closer match to the reference.
+config = src / "Config.java"
+config_text = config.read_text().replace("public int theme = 0;", "public int theme = 1;")
+config.write_text(config_text)
