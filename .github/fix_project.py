@@ -1419,3 +1419,71 @@ meta = root / "src/main/resources/fabric.mod.json"
 meta_text = meta.read_text().removesuffix(chr(92) + "n").rstrip()
 meta.write_text(meta_text + chr(10))
 json.loads(meta.read_text())
+
+
+# VØID 1.0.8: X opens the dashboard, join chime, and panel-only transitions.
+screen = src / "SettingsScreen.java"
+screen_text = screen.read_text()
+# Restrict the transition overlay to the dashboard surface; never cover the game world.
+screen_text = screen_text.replace(
+    "c.fill(0, 0, width, height, ((int)(alpha * 245f) << 24));",
+    "c.fill(left + 1, top + 1, left + panelW - 1, top + panelH - 1, ((int)(alpha * 245f) << 24));"
+)
+# Clean up the transition by keeping its fade inside the rounded dashboard bounds.
+screen_text = screen_text.replace(
+    "c.fill(0, 0, width, height,",
+    "c.fill(left + 1, top + 1, left + panelW - 1, top + panelH - 1,"
+)
+screen.write_text(screen_text)
+
+client = src / "NineStyleClient.java"
+client_text = client.read_text()
+imports = [
+    "import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;",
+    "import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;",
+    "import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;",
+    "import net.minecraft.client.option.KeyBinding;",
+    "import net.minecraft.client.util.InputUtil;",
+    "import net.minecraft.client.sound.PositionedSoundInstance;",
+    "import net.minecraft.sound.SoundEvents;",
+    "import org.lwjgl.glfw.GLFW;"
+]
+for imp in imports:
+    if imp not in client_text:
+        client_text = client_text.replace("package com.ninestyle;", "package com.ninestyle;\\n" + imp, 1)
+needle = "public void onInitializeClient() {"
+if needle not in client_text:
+    needle = "public void onInitializeClient()"
+    if needle not in client_text:
+        raise RuntimeError("Could not locate client initializer for X keybind")
+    brace = client_text.index("{", client_text.index(needle)) + 1
+else:
+    brace = client_text.index(needle) + len(needle)
+setup = r"""
+        KeyBinding voidOpenKey = KeyBindingHelper.registerKeyBinding(
+            new KeyBinding("key.void.open_menu", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_X,
+                KeyBinding.Category.MISC)
+        );
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            while (voidOpenKey.wasPressed()) {
+                if (client.currentScreen == null) client.setScreen(new SettingsScreen());
+            }
+        });
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) ->
+            client.execute(() -> client.getSoundManager().play(
+                PositionedSoundInstance.master(SoundEvents.UI_TOAST_IN, 0.8f)
+            ))
+        );
+"""
+client_text = client_text[:brace] + setup + client_text[brace:]
+client.write_text(client_text)
+
+# Keep release metadata and Gradle artifact version synchronized.
+import json, re
+meta = root / "src/main/resources/fabric.mod.json"
+data = json.loads(meta.read_text())
+data["version"] = "1.0.8"
+data["name"] = "VØID Streamer Essentials"
+meta.write_text(json.dumps(data, indent=2) + chr(10))
+props = root / "gradle.properties"
+props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.8", props.read_text()))
