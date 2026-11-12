@@ -1644,3 +1644,145 @@ data["version"] = "1.0.10"
 meta.write_text(json.dumps(data, indent=2) + chr(10))
 props = root / "gradle.properties"
 props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.10", props.read_text()))
+
+
+# VØID 1.0.11: wire the real Donut Auction item catalogue into the dashboard,
+# only accept labeled /bal replies, and replace fades with swipe-up motion blur.
+tracker = src / "BalanceTracker.java"
+tracker_text = tracker.read_text()
+fallback = """        Matcher m = LABELED.matcher(msg);
+        if (!m.find()) {
+            // Some economy plugins reply with just "$12,345" after /bal.
+            m = MONEY.matcher(msg);
+            if (!m.find() || (!msg.contains("$") && !low.contains("bal"))) return false;
+        }"""
+strict = """        // Only accept an explicitly labeled balance response. A purchase/chat
+        // message containing a dollar amount must never overwrite the real balance.
+        Matcher m = LABELED.matcher(msg);
+        if (!m.find()) return false;"""
+if fallback in tracker_text:
+    tracker_text = tracker_text.replace(fallback, strict, 1)
+elif "Only accept an explicitly labeled balance response" not in tracker_text:
+    raise RuntimeError("Could not locate BalanceTracker's permissive money fallback")
+tracker.write_text(tracker_text)
+
+screen = src / "SettingsScreen.java"
+screen_text = screen.read_text()
+
+# The original auction package already includes a searchable, registry-backed
+# catalogue of Minecraft items. Open that screen rather than calling its API
+# with a guessed signature / reflected ItemStack class.
+a = screen_text.index("    private void auctionPage(")
+b = screen_text.index("    private void hudPage(", a)
+auction_method = r'''    private void auctionPage(DrawContext c, Theme th, int y) {
+        int gap = 10;
+        int half = (contentW - gap) / 2;
+        boolean active = false;
+        String itemName = "No active auction";
+        String leader = "Waiting for first bid";
+        String topBid = "$0";
+        String timeLeft = "Ready";
+        try {
+            com.donutauction.Auction auction = com.donutauction.DonutAuctionClient.auction;
+            if (auction != null) {
+                active = auction.active;
+                itemName = auction.itemName;
+                if (auction.leader != null && !auction.leader.isBlank()) leader = auction.leader;
+                topBid = MoneyFmt.compact(auction.highBid);
+                long remaining = Math.max(0L, auction.endAt - System.currentTimeMillis());
+                timeLeft = String.format("%d:%02d", remaining / 60000L, (remaining / 1000L) % 60L);
+            }
+        } catch (Throwable ignored) {}
+
+        Draw.round(c, contentX, y, contentW, 78, 10, 0xC51A2637);
+        Draw.round(c, contentX, y, 3, 78, 2, active ? 0xFF5DE6A2 : th.accent);
+        Draw.text(c, "AUCTION CONTROL", contentX + 16, y + 11, th.sub);
+        Draw.text(c, active ? "Auction is live" : "Ready to create an auction",
+                contentX + 16, y + 30, th.text);
+        Draw.text(c, active ? "LIVE" : "IDLE", contentX + contentW - 58, y + 16,
+                active ? 0xFF5DE6A2 : th.sub);
+        Draw.text(c, itemName, contentX + 16, y + 53, th.sub);
+
+        card(c, contentX, y + 90, half, 62, th, "TOP BID", topBid);
+        card(c, contentX + half + gap, y + 90, half, 62, th, "TIME LEFT", timeLeft);
+        card(c, contentX, y + 162, half, 62, th, "HIGH BIDDER", leader);
+        card(c, contentX + half + gap, y + 162, half, 62, th, "BID EXTENSION",
+                com.donutauction.DonutAuctionClient.addThreeSecondsPerBid ? "3 seconds: ON" : "3 seconds: OFF");
+
+        button(c, "auctioncatalog", contentX, y + 240, contentW, 42,
+                "BROWSE ALL MINECRAFT ITEMS", th, () -> {
+                    MinecraftClient mc = MinecraftClient.getInstance();
+                    mc.setScreen(new com.donutauction.AuctionScreen());
+                });
+        button(c, "auctionextension", contentX, y + 294, half, 32,
+                "Toggle bid extension", th, com.donutauction.DonutAuctionClient::toggleBidTimeExtension);
+        if (active) {
+            button(c, "auctionstop", contentX + half + gap, y + 294, half, 32,
+                    "END AUCTION", th, com.donutauction.DonutAuctionClient::cancel);
+        } else {
+            Draw.text(c, "Search the full item catalogue, choose an item, then set quantity, value and bid settings.",
+                    contentX + 2, y + 340, th.sub);
+        }
+    }
+
+'''
+screen_text = screen_text[:a] + auction_method + screen_text[b:]
+
+# Swipe each newly selected module upward inside the dashboard content region.
+# Keep the sidebar and Minecraft world stationary. The faint offset panels are
+# motion-blur trails behind the moving content.
+change_start = screen_text.index("    private void changePage(")
+change_end = screen_text.index("    @Override", change_start)
+change_method = """    private void changePage(String next) {
+        if (!page.equals(next)) {
+            page = next;
+            queuedPage = null;
+            transitionAt = System.currentTimeMillis();
+            MinecraftClient mc = MinecraftClient.getInstance();
+            mc.getSoundManager().play(PositionedSoundInstance.master(SoundEvents.UI_BUTTON_CLICK, 0.85f));
+        }
+    }
+
+"""
+screen_text = screen_text[:change_start] + change_method + screen_text[change_end:]
+
+old_motion = """        float progress = transitionAt == 0L ? 1f : Math.min(1f, (System.currentTimeMillis() - transitionAt) / 230f);
+        float slide = (1f - ease(progress)) * 18f;
+        c.getMatrices().pushMatrix();
+        c.getMatrices().translate(slide, 0f);
+        renderPage(c, th, cfg);
+        c.getMatrices().popMatrix();
+        if (progress < 1f) {
+            int a = (int)((1f - progress) * 70f);
+            c.fill(contentX, top + 65, left + panelW - 10, top + panelH - 10, (a << 24));
+        }"""
+new_motion = """        float progress = transitionAt == 0L ? 1f : Math.min(1f, (System.currentTimeMillis() - transitionAt) / 220f);
+        float eased = ease(progress);
+        float slide = (1f - eased) * 38f;
+        int contentRight = left + panelW - 10;
+        int contentBottom = top + panelH - 10;
+        if (progress < 1f) {
+            for (int trail = 3; trail >= 1; trail--) {
+                int offset = (int)(slide * trail * 0.22f);
+                int alpha = (int)((1f - progress) * (9 + trail * 5));
+                c.fill(contentX, top + 65 - offset, contentRight, contentBottom - offset,
+                        (alpha << 24) | 0x00D9E9FF);
+            }
+        }
+        c.getMatrices().pushMatrix();
+        c.getMatrices().translate(0f, slide);
+        renderPage(c, th, cfg);
+        c.getMatrices().popMatrix();
+        if (progress >= 1f) transitionAt = 0L;"""
+if old_motion not in screen_text:
+    raise RuntimeError("Could not find the current VØID module transition block")
+screen_text = screen_text.replace(old_motion, new_motion, 1)
+screen.write_text(screen_text)
+
+# Release metadata.
+meta = root / "src/main/resources/fabric.mod.json"
+data = json.loads(meta.read_text())
+data["version"] = "1.0.11"
+meta.write_text(json.dumps(data, indent=2) + chr(10))
+props = root / "gradle.properties"
+props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.11", props.read_text()))
