@@ -316,3 +316,127 @@ if meta.exists():
     data = json.loads(meta.read_text())
     data["version"] = "1.0.4"
     meta.write_text(json.dumps(data, indent=2) + "\n")
+
+
+# VØID balance tracker reliability update:
+# - request /bal shortly after joining and then on the configured interval
+# - accept common server formats with or without a currency symbol
+# - don't require the literal word "balance" if a /bal reply contains a money amount
+tracker = src / "BalanceTracker.java"
+tracker.write_text(r"""package com.ninestyle;
+
+import net.minecraft.client.MinecraftClient;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/** Polls /bal and tracks the session baseline, current balance, and net change. */
+public final class BalanceTracker {
+    private BalanceTracker() {}
+
+    private static final Pattern MONEY = Pattern.compile(
+        "(?i)\\$?\\s*([0-9][0-9,]*(?:\\.[0-9]+)?)\\s*([kmbt])?(?![a-z])"
+    );
+    private static final Pattern LABELED = Pattern.compile(
+        "(?i)(?:balance|bal(?:ance)?)\\D{0,24}\\$?\\s*([0-9][0-9,]*(?:\\.[0-9]+)?)\\s*([kmbt])?"
+    );
+
+    public static double balance = Double.NaN;
+    public static double startingBalance = Double.NaN;
+    public static double previous = Double.NaN;
+    public static double lastChange = Double.NaN;
+
+    private static long nextRequestAt = 0L;
+    private static long awaitUntil = 0L;
+    private static boolean requestPending = false;
+    private static int joinTicks = 0;
+
+    public static boolean hasData() { return !Double.isNaN(balance); }
+
+    public static void tick(MinecraftClient mc) {
+        if (mc.player == null || mc.getNetworkHandler() == null) {
+            joinTicks = 0;
+            requestPending = false;
+            awaitUntil = 0L;
+            nextRequestAt = 0L;
+            balance = startingBalance = previous = lastChange = Double.NaN;
+            return;
+        }
+        Config cfg = Config.get();
+        if (!cfg.hudEnabled) return;
+
+        if (joinTicks < 40) {
+            joinTicks++;
+            if (joinTicks < 40) return;
+        }
+
+        long now = System.currentTimeMillis();
+        if (requestPending && now <= awaitUntil) return;
+        if (now < nextRequestAt) return;
+
+        requestPending = true;
+        awaitUntil = now + 12000L;
+        nextRequestAt = now + Math.max(30, cfg.checkSeconds) * 1000L;
+        mc.getNetworkHandler().sendChatCommand("bal");
+    }
+
+    public static boolean onMessage(String msg, boolean overlay) {
+        if (overlay || !requestPending || System.currentTimeMillis() > awaitUntil) return false;
+        String low = msg.toLowerCase();
+        if (low.contains("paid") || low.contains("received") || low.contains("sent")
+                || low.contains("transfer") || low.contains("purchase")) return false;
+
+        Matcher m = LABELED.matcher(msg);
+        if (!m.find()) {
+            // Some economy plugins reply with just "$12,345" after /bal.
+            m = MONEY.matcher(msg);
+            if (!m.find() || (!msg.contains("$") && !low.contains("bal"))) return false;
+        }
+
+        double value;
+        try {
+            value = Double.parseDouble(m.group(1).replace(",", ""));
+            String suffix = m.group(2);
+            if (suffix != null) {
+                switch (Character.toLowerCase(suffix.charAt(0))) {
+                    case 'k' -> value *= 1_000d;
+                    case 'm' -> value *= 1_000_000d;
+                    case 'b' -> value *= 1_000_000_000d;
+                    case 't' -> value *= 1_000_000_000_000d;
+                    default -> {}
+                }
+            }
+        } catch (RuntimeException ex) {
+            return false;
+        }
+
+        if (Double.isNaN(startingBalance)) {
+            startingBalance = value;
+            balance = value;
+            previous = value;
+            lastChange = 0d;
+        } else {
+            previous = balance;
+            balance = value;
+            lastChange = balance - previous;
+        }
+
+        requestPending = false;
+        awaitUntil = 0L;
+        return Config.get().hideReply;
+    }
+}
+""")
+
+# Ensure the settings screen is reachable with /opiod and visibly branded VØID.
+client = src / "NineStyleClient.java"
+if client.exists():
+    s = client.read_text().replace('literal("9ugh")', 'literal("opiod")')
+    s = s.replace('// /9ugh opens the theme + HUD settings', '// /opiod opens VØID settings')
+    client.write_text(s)
+
+screen = src / "SettingsScreen.java"
+if screen.exists():
+    s = screen.read_text().replace('Text.literal("9ugh Style")', 'Text.literal("VØID")')
+    s = s.replace('"9ugh Style"', '"VØID"')
+    s = s.replace('"Balance Tracker  (/bal)"', '"VØID BALANCE TRACKER  (/bal)"')
+    screen.write_text(s)
