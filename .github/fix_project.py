@@ -1320,3 +1320,13 @@ ledger_text = ledger_text.replace(
     "if (now - lastOutgoingAt > 12000L) lastOutgoingAmount = 0d;\n            lastOutgoingAt = now;\n            lastOutgoingAmount += amount;"
 )
 ledger.write_text(ledger_text)
+
+
+# Final release number for the payment-ledger and dashboard build.
+meta = root / "src/main/resources/fabric.mod.json"
+data = json.loads(meta.read_text())
+data["version"] = "1.0.6"
+meta.write_text(json.dumps(data, indent=2) + "\n")
+props = root / "gradle.properties"
+props_text = re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.6", props.read_text())
+props.write_text(props_text)
