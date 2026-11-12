@@ -1276,3 +1276,15 @@ screen_text = screen_text[:start] + r'''    private void auctionPage(DrawContext
 
 ''' + screen_text[end:]
 screen.write_text(screen_text)
+
+
+# Parse payment amounts after payment verbs so digits in usernames are never mistaken for money.
+ledger = src / "PaymentLedger.java"
+ledger_text = ledger.read_text()
+ledger_text = ledger_text.replace(
+    'private static final Pattern MONEY = Pattern.compile("(?i)\\\\$?\\\\s*([0-9][0-9,]*(?:\\\\.[0-9]+)?)\\\\s*([kmbt])?");',
+    'private static final Pattern MONEY = Pattern.compile("(?i)\\\\$?\\\\s*([0-9][0-9,]*(?:\\\\.[0-9]+)?)\\\\s*([kmbt])?");\n    private static final Pattern PAYMENT_AMOUNT = Pattern.compile("(?i)(?:paid\\\\s+you|received|sent|transferred|purchased|payment(?:\\\\s+of)?)\\\\D{0,24}\\\\$?\\\\s*([0-9][0-9,]*(?:\\\\.[0-9]+)?)\\\\s*([kmbt])?");'
+)
+ledger_text = ledger_text.replace("Matcher m = MONEY.matcher(message);", "Matcher m = PAYMENT_AMOUNT.matcher(message);")
+ledger_text = ledger_text.replace("if (overlay || message == null) return;", "if (overlay || message == null || !Config.get().trackerEnabled) return;")
+ledger.write_text(ledger_text)
