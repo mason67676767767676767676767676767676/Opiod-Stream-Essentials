@@ -166,3 +166,22 @@ s = s.replace('String p = Double.isNaN(prev) ? "--" : MoneyFmt.compact(prev);', 
 s = s.replace('"Change"', '"Current"')
 s = s.replace('String c = Double.isNaN(chg) ? "--" : MoneyFmt.signed(chg);', 'String c = Double.isNaN(BalanceTracker.balance) && !preview ? "--" : MoneyFmt.compact(preview ? 125450 : BalanceTracker.balance);')
 hud.write_text(s)
+
+# Color the main figure by total gain/loss from the session baseline.
+hud = src / "BalanceHud.java"
+s = hud.read_text().replace("(chg > 0 ? GREEN : (chg < 0 ? RED : GRAY))", "(bal > 0 ? GREEN : (bal < 0 ? RED : GRAY))")
+hud.write_text(s)
+
+# Use /opiod as the settings command.
+client = src / "NineStyleClient.java"
+s = client.read_text().replace('literal("9ugh")', 'literal("opiod")')
+client.write_text(s)
+
+# Version for this balance-baseline release.
+props = root / "gradle.properties"
+s = props.read_text().replace("mod_version=1.0.1", "mod_version=1.0.2")
+props.write_text(s)
+meta = root / "src/main/resources/fabric.mod.json"
+if meta.exists():
+    s = meta.read_text().replace('"version": "1.0.1"', '"version": "1.0.2"')
+    meta.write_text(s)
