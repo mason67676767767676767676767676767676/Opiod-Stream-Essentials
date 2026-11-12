@@ -185,3 +185,100 @@ meta = root / "src/main/resources/fabric.mod.json"
 if meta.exists():
     s = meta.read_text().replace('"version": "1.0.1"', '"version": "1.0.2"')
     meta.write_text(s)
+
+
+# Replace the single HUD card with three individually separated translucent modules.
+hud = src / "BalanceHud.java"
+hud.write_text('''package com.ninestyle;
+
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.DrawContext;
+
+public final class BalanceHud {
+    private BalanceHud() {}
+
+    private static final int PAD = 7;
+    private static final float BIG = 1.55f;
+    private static final int GREEN = 0xFF5CFF9D, RED = 0xFFFF6B6B, GRAY = 0xFFA0A8B4;
+    private static final String OWNER = "Owner: @9ugh @Jittrclick";
+
+    private record Vals(String net, String starting, String current, int netColor) {}
+
+    private static Vals vals(boolean preview) {
+        double start = preview ? 122950 : BalanceTracker.startingBalance;
+        double current = preview ? 125450 : BalanceTracker.balance;
+        double net = preview ? current - start : (Double.isNaN(start) || Double.isNaN(current) ? Double.NaN : current - start);
+        String n = Double.isNaN(net) ? "$--" : MoneyFmt.signed(net);
+        String s = Double.isNaN(start) ? "$--" : MoneyFmt.compact(start);
+        String c = Double.isNaN(current) ? "$--" : MoneyFmt.compact(current);
+        int color = Double.isNaN(net) ? GRAY : (net > 0 ? GREEN : (net < 0 ? RED : GRAY));
+        return new Vals(n, s, c, color);
+    }
+
+    public static int[] size(boolean preview) {
+        Vals v = vals(preview);
+        int bigW = (int) Math.ceil(Draw.width(v.net) * BIG);
+        int statsW = Draw.width("Starting: " + v.starting) + 14;
+        int ownerW = Draw.width(OWNER) + 14;
+        int w = Math.max(132, Math.max(bigW + PAD * 2, Math.max(statsW, ownerW)) + PAD * 2);
+        return new int[]{w, 119};
+    }
+
+    public static void render(DrawContext c) {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        Config cfg = Config.get();
+        if (!cfg.hudEnabled || mc.options.hudHidden) return;
+        if (mc.currentScreen instanceof SettingsScreen) return;
+        int[] s = size(false);
+        int x = Math.min(cfg.hudX, Math.max(0, mc.getWindow().getScaledWidth() - s[0]));
+        int y = Math.min(cfg.hudY, Math.max(0, mc.getWindow().getScaledHeight() - s[1]));
+        draw(c, x, y, false);
+    }
+
+    public static void draw(DrawContext c, int x, int y, boolean preview) {
+        Config cfg = Config.get();
+        Vals v = vals(preview);
+        int[] dimensions = size(preview);
+        int w = dimensions[0];
+        int alpha = (int) (255 * (Palette.OPACITY_PCT[cfg.hudOpacity] / 100f));
+        int bg = (alpha << 24) | (Palette.HUD_BG[cfg.hudBg] & 0xFFFFFF);
+        int accent = Palette.HUD_TEXT[cfg.hudText];
+        int module1 = 43, module2 = 35, module3 = 25, gap = 5;
+
+        // Each section is its own card, with a visible gap between modules.
+        Draw.round(c, x, y, w, module1, 7, bg);
+        Draw.text(c, "BALANCE CHANGE", x + PAD, y + 5, GRAY);
+        c.getMatrices().pushMatrix();
+        c.getMatrices().translate(x + PAD, y + 17);
+        c.getMatrices().scale(BIG, BIG);
+        Draw.text(c, v.net, 0, 0, v.netColor);
+        c.getMatrices().popMatrix();
+        Draw.round(c, x + w - 15, y + 8, 7, 7, 3, accent);
+
+        int y2 = y + module1 + gap;
+        Draw.round(c, x, y2, w, module2, 7, bg);
+        Draw.text(c, "STARTING", x + PAD, y2 + 5, GRAY);
+        Draw.text(c, v.starting, x + PAD, y2 + 17, 0xFFE6EAF0);
+        Draw.text(c, "CURRENT", x + w / 2, y2 + 5, GRAY);
+        Draw.text(c, v.current, x + w / 2, y2 + 17, accent);
+
+        int y3 = y2 + module2 + gap;
+        Draw.round(c, x, y3, w, module3, 7, bg);
+        Draw.text(c, OWNER, x + PAD, y3 + 8, accent);
+    }
+}
+''')
+
+# Use a slightly transparent default; users can still change opacity in /opiod.
+config = src / "Config.java"
+s = config.read_text().replace("hudBg = 0, hudText = 1, hudOpacity = 2;", "hudBg = 0, hudText = 1, hudOpacity = 1;")
+config.write_text(s)
+
+# Version for the modular HUD release.
+props = root / "gradle.properties"
+s = props.read_text().replace("mod_version=1.0.2", "mod_version=1.0.3")
+props.write_text(s)
+meta = root / "src/main/resources/fabric.mod.json"
+if meta.exists():
+    s = meta.read_text().replace('"version": "1.0.2"', '"version": "1.0.3"')
+    meta.write_text(s)
