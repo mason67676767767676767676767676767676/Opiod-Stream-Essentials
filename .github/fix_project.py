@@ -1487,3 +1487,10 @@ data["name"] = "VØID Streamer Essentials"
 meta.write_text(json.dumps(data, indent=2) + chr(10))
 props = root / "gradle.properties"
 props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.8", props.read_text()))
+
+
+# Repair escaped newline sequences introduced by the X-key patch before compilation.
+client = src / "NineStyleClient.java"
+client_text = client.read_text()
+client_text = client_text.replace(chr(92) + "n", chr(10))
+client.write_text(client_text)
