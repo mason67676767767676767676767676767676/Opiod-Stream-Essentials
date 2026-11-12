@@ -1652,9 +1652,8 @@ tracker = src / "BalanceTracker.java"
 tracker_text = tracker.read_text()
 fallback = """        Matcher m = LABELED.matcher(msg);
         if (!m.find()) {
-            // Some economy plugins reply with just "$12,345" after /bal.
             m = MONEY.matcher(msg);
-            if (!m.find() || (!msg.contains("$") && !low.contains("bal"))) return false;
+            if (!m.find()) return false;
         }"""
 strict = """        // Only accept an explicitly labeled balance response. A purchase/chat
         // message containing a dollar amount must never overwrite the real balance.
