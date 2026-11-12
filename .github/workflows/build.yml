@@ -7,7 +7,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Extract project bundle
         run: |
-          unzip -o Opiod-Stream-Essentials-combined-project.zip -d .
+          unzip -o Opiod-Stream-Essentials-combined-project.zip -d .\n      - name: Apply HUD fixes\n        run: python3 .github/fix_project.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
