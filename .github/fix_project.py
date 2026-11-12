@@ -1288,3 +1288,15 @@ ledger_text = ledger_text.replace(
 ledger_text = ledger_text.replace("Matcher m = MONEY.matcher(message);", "Matcher m = PAYMENT_AMOUNT.matcher(message);")
 ledger_text = ledger_text.replace("if (overlay || message == null) return;", "if (overlay || message == null || !Config.get().trackerEnabled) return;")
 ledger.write_text(ledger_text)
+
+
+# Match the reference's 6-by-3 theme swatch grid and make frosted glass a real toggle.
+screen = src / "SettingsScreen.java"
+screen_text = screen.read_text()
+screen_text = screen_text.replace("int cols = 3, gap = 8, bw = (contentW - gap * (cols - 1)) / cols;",
+                                  "int cols = 6, gap = 7, bw = (contentW - gap * (cols - 1)) / cols;")
+screen_text = screen_text.replace(
+    'card(c, contentX, y + 273, contentW, 48, th, "FROSTED GLASS", "Theme colors apply to the dashboard and the in-game HUD.");',
+    'button(c, "frosted", contentX, y + 145, contentW, 32, "Frosted glass: " + (cfg.glass ? "ON" : "OFF"), th, () -> { cfg.glass = !cfg.glass; Config.save(); });'
+)
+screen.write_text(screen_text)
