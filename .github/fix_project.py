@@ -1300,3 +1300,23 @@ screen_text = screen_text.replace(
     'button(c, "frosted", contentX, y + 145, contentW, 32, "Frosted glass: " + (cfg.glass ? "ON" : "OFF"), th, () -> { cfg.glass = !cfg.glass; Config.save(); });'
 )
 screen.write_text(screen_text)
+
+
+# Migrate older VØID configs to the new five-second balance polling interval once.
+config = src / "Config.java"
+config_text = config.read_text()
+config_text = config_text.replace("public int skyStyle = 0;", "public int skyStyle = 0;\n    public int configVersion = 0;")
+config_text = config_text.replace(
+    "if (checkSeconds < 5) checkSeconds = 5;",
+    "if (configVersion < 2) { checkSeconds = 5; configVersion = 2; }\n        if (checkSeconds < 5) checkSeconds = 5;"
+)
+config.write_text(config_text)
+
+# Combine rapid outgoing chat payments when reconciling them against the next /bal decrease.
+ledger = src / "PaymentLedger.java"
+ledger_text = ledger.read_text()
+ledger_text = ledger_text.replace(
+    "lastOutgoingAt = now;\n            lastOutgoingAmount = amount;",
+    "if (now - lastOutgoingAt > 12000L) lastOutgoingAmount = 0d;\n            lastOutgoingAt = now;\n            lastOutgoingAmount += amount;"
+)
+ledger.write_text(ledger_text)
