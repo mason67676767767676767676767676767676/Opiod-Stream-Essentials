@@ -291,3 +291,28 @@ if meta.exists():
     data = json.loads(meta.read_text())
     data["name"] = "Opiod Streamer Essentials"
     meta.write_text(json.dumps(data, indent=2) + "\\n")
+
+
+# Rebrand the installed client and its visible HUD as VØID.
+import json
+meta = root / "src/main/resources/fabric.mod.json"
+if meta.exists():
+    data = json.loads(meta.read_text())
+    data["name"] = "VØID"
+    data["description"] = "VØID — modular streamer essentials"
+    meta.write_text(json.dumps(data, indent=2) + "\\n")
+
+hud = src / "BalanceHud.java"
+if hud.exists():
+    s = hud.read_text().replace('Owner: @9ugh @Jittrclick', 'VØID  //  BALANCE TRACKER')
+    hud.write_text(s)
+
+# Release number for the VØID-branded build.
+props = root / "gradle.properties"
+if props.exists():
+    s = props.read_text().replace("mod_version=1.0.3", "mod_version=1.0.4")
+    props.write_text(s)
+if meta.exists():
+    data = json.loads(meta.read_text())
+    data["version"] = "1.0.4"
+    meta.write_text(json.dumps(data, indent=2) + "\\n")
