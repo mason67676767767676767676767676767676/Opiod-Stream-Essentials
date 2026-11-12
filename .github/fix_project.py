@@ -1711,7 +1711,7 @@ auction_method = r'''    private void auctionPage(DrawContext c, Theme th, int y
         button(c, "auctioncatalog", contentX, y + 240, contentW, 42,
                 "BROWSE ALL MINECRAFT ITEMS", th, () -> {
                     MinecraftClient mc = MinecraftClient.getInstance();
-                    mc.setScreen(new com.donutauction.AuctionScreen());
+                    try { mc.setScreen((Screen) Class.forName("com.donutauction.AuctionScreen").getConstructor().newInstance()); } catch (ReflectiveOperationException ex) { if (mc.player != null) mc.player.sendMessage(Text.literal("VØID: Could not open the item catalogue."), false); }
                 });
         button(c, "auctionextension", contentX, y + 294, half, 32,
                 "Toggle bid extension", th, com.donutauction.DonutAuctionClient::toggleBidTimeExtension);
