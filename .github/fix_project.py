@@ -1745,15 +1745,19 @@ change_method = """    private void changePage(String next) {
 """
 screen_text = screen_text[:change_start] + change_method + screen_text[change_end:]
 
-old_motion = """        float progress = transitionAt == 0L ? 1f : Math.min(1f, (System.currentTimeMillis() - transitionAt) / 230f);
-        float slide = (1f - ease(progress)) * 18f;
-        c.getMatrices().pushMatrix();
-        c.getMatrices().translate(slide, 0f);
+old_motion = """        long elapsed = transitionAt == 0L ? 1000L : System.currentTimeMillis() - transitionAt;
+        if (queuedPage != null && elapsed >= 72L) {
+            page = queuedPage;
+            queuedPage = null;
+        }
         renderPage(c, th, cfg);
-        c.getMatrices().popMatrix();
-        if (progress < 1f) {
-            int a = (int)((1f - progress) * 70f);
-            c.fill(contentX, top + 65, left + panelW - 10, top + panelH - 10, (a << 24));
+        if (transitionAt != 0L && elapsed < 180L) {
+            // 72ms fade to black, swap module at full black, then fade back in.
+            float alpha = elapsed < 72L ? elapsed / 72f : 1f - ((elapsed - 72L) / 108f);
+            alpha = Math.max(0f, Math.min(1f, alpha));
+            c.fill(left + 1, top + 1, left + panelW - 1, top + panelH - 1, ((int)(alpha * 245f) << 24));
+        } else if (transitionAt != 0L) {
+            transitionAt = 0L;
         }"""
 new_motion = """        float progress = transitionAt == 0L ? 1f : Math.min(1f, (System.currentTimeMillis() - transitionAt) / 220f);
         float eased = ease(progress);
