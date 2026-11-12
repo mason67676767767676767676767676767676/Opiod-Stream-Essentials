@@ -1396,3 +1396,26 @@ meta.write_text(json.dumps(data, indent=2) + "\\n")
 props = root / "gradle.properties"
 props_text = re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.7", props.read_text())
 props.write_text(props_text)
+
+
+# Repair 1.0.7 transition patch: ensure field/imports exist and metadata is valid JSON.
+screen = src / "SettingsScreen.java"
+screen_text = screen.read_text()
+if "import net.minecraft.client.sound.PositionedSoundInstance;" not in screen_text:
+    screen_text = screen_text.replace(
+        "import net.minecraft.client.gui.screen.Screen;",
+        "import net.minecraft.client.gui.screen.Screen;" + chr(10) +
+        "import net.minecraft.client.sound.PositionedSoundInstance;" + chr(10) +
+        "import net.minecraft.sound.SoundEvents;"
+    )
+if "private String queuedPage = null;" not in screen_text:
+    screen_text = screen_text.replace(
+        "private long transitionAt = 0L;",
+        "private long transitionAt = 0L;" + chr(10) + "    private String queuedPage = null;"
+    )
+screen.write_text(screen_text)
+
+meta = root / "src/main/resources/fabric.mod.json"
+meta_text = meta.read_text().removesuffix(chr(92) + "n").rstrip()
+meta.write_text(meta_text + chr(10))
+json.loads(meta.read_text())
