@@ -139,3 +139,9 @@ palette.write_text(s)
 props = root / "gradle.properties"
 s = props.read_text().replace("mod_version=1.0.0", "mod_version=1.0.1")
 props.write_text(s)
+
+# Keep the packaged Fabric metadata aligned with this patched release.
+meta = root / "src/main/resources/fabric.mod.json"
+if meta.exists():
+    s = meta.read_text().replace('"version": "1.0.0"', '"version": "1.0.1"')
+    meta.write_text(s)
