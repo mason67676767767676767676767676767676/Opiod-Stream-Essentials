@@ -1208,7 +1208,7 @@ public class SettingsScreen extends Screen {
 # The bundled auction classes must be on the compile classpath as well as inside the final JAR.
 build_file = root / "build.gradle"
 build_text = build_file.read_text()
-if 'compileOnly files("libs/donut-auction-original.jar")' not in build_text:
+if 'modCompileOnly files("libs/donut-auction-original.jar")' not in build_text:
     build_text = build_text.replace("dependencies {", 'dependencies {\n    compileOnly files("libs/donut-auction-original.jar")')
 build_file.write_text(build_text)
 
