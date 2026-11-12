@@ -282,3 +282,12 @@ meta = root / "src/main/resources/fabric.mod.json"
 if meta.exists():
     s = meta.read_text().replace('"version": "1.0.2"', '"version": "1.0.3"')
     meta.write_text(s)
+
+
+# Rebrand the mod in Fabric's installed-mod list and metadata.
+import json
+meta = root / "src/main/resources/fabric.mod.json"
+if meta.exists():
+    data = json.loads(meta.read_text())
+    data["name"] = "Opiod Streamer Essentials"
+    meta.write_text(json.dumps(data, indent=2) + "\\n")
