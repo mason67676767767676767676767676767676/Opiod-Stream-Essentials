@@ -1330,3 +1330,69 @@ meta.write_text(json.dumps(data, indent=2) + "\n")
 props = root / "gradle.properties"
 props_text = re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.6", props.read_text())
 props.write_text(props_text)
+
+
+# VØID 1.0.7: fast full-screen module transitions and a UI click sound.
+screen = src / "SettingsScreen.java"
+screen_text = screen.read_text()
+if "import net.minecraft.client.sound.PositionedSoundInstance;" not in screen_text:
+    screen_text = screen_text.replace(
+        "import net.minecraft.client.gui.screen.Screen;\\n",
+        "import net.minecraft.client.gui.screen.Screen;\\nimport net.minecraft.client.sound.PositionedSoundInstance;\\nimport net.minecraft.sound.SoundEvents;\\n"
+    )
+screen_text = screen_text.replace(
+    '    private long transitionAt = 0L;\\n',
+    '    private long transitionAt = 0L;\\n    private String queuedPage = null;\\n'
+)
+old_change = """    private void changePage(String next) {
+        if (!page.equals(next)) {
+            page = next;
+            transitionAt = System.currentTimeMillis();
+        }
+    }"""
+new_change = """    private void changePage(String next) {
+        if (!page.equals(next) && queuedPage == null) {
+            queuedPage = next;
+            transitionAt = System.currentTimeMillis();
+            MinecraftClient mc = MinecraftClient.getInstance();
+            mc.getSoundManager().play(PositionedSoundInstance.master(SoundEvents.UI_BUTTON_CLICK, 0.85f));
+        }
+    }"""
+screen_text = screen_text.replace(old_change, new_change)
+old_render = """        float progress = transitionAt == 0L ? 1f : Math.min(1f, (System.currentTimeMillis() - transitionAt) / 230f);
+        float slide = (1f - ease(progress)) * 18f;
+        c.getMatrices().pushMatrix();
+        c.getMatrices().translate(slide, 0f);
+        renderPage(c, th, cfg);
+        c.getMatrices().popMatrix();
+        if (progress < 1f) {
+            int a = (int)((1f - progress) * 70f);
+            c.fill(contentX, top + 65, left + panelW - 10, top + panelH - 10, (a << 24));
+        }"""
+new_render = """        long elapsed = transitionAt == 0L ? 1000L : System.currentTimeMillis() - transitionAt;
+        if (queuedPage != null && elapsed >= 72L) {
+            page = queuedPage;
+            queuedPage = null;
+        }
+        renderPage(c, th, cfg);
+        if (transitionAt != 0L && elapsed < 180L) {
+            // 72ms fade to black, swap module at full black, then fade back in.
+            float alpha = elapsed < 72L ? elapsed / 72f : 1f - ((elapsed - 72L) / 108f);
+            alpha = Math.max(0f, Math.min(1f, alpha));
+            c.fill(0, 0, width, height, ((int)(alpha * 245f) << 24));
+        } else if (transitionAt != 0L) {
+            transitionAt = 0L;
+        }"""
+if old_render not in screen_text:
+    raise RuntimeError("Could not find expected VØID page-transition render block")
+screen_text = screen_text.replace(old_render, new_render)
+screen.write_text(screen_text)
+
+# Bump the packaged release to 1.0.7.
+meta = root / "src/main/resources/fabric.mod.json"
+data = json.loads(meta.read_text())
+data["version"] = "1.0.7"
+meta.write_text(json.dumps(data, indent=2) + "\\n")
+props = root / "gradle.properties"
+props_text = re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.7", props.read_text())
+props.write_text(props_text)
