@@ -1494,3 +1494,132 @@ client = src / "NineStyleClient.java"
 client_text = client.read_text()
 client_text = client_text.replace(chr(92) + "n", chr(10))
 client.write_text(client_text)
+
+
+# VØID 1.0.9: make the auction controls a native page inside the VØID dashboard.
+screen = src / "SettingsScreen.java"
+screen_text = screen.read_text()
+if "private int auctionDurationChoice" not in screen_text:
+    screen_text = screen_text.replace(
+        "private String page = \"Overview\";",
+        "private String page = \"Overview\";" + chr(10) +
+        "    private int auctionDurationChoice = 1;" + chr(10) +
+        "    private int auctionBidChoice = 1;"
+    )
+
+start = screen_text.index("    private void auctionPage(")
+end = screen_text.index("    private void hudPage(", start)
+auction_method = r'''    private void auctionPage(DrawContext c, Theme th, int y) {
+        int gap = 10;
+        int half = (contentW - gap) / 2;
+        boolean active = false;
+        String itemName = "No active auction";
+        String leader = "—";
+        String topBid = "$0";
+        String timeLeft = "Ready";
+        try {
+            Class<?> clientClass = Class.forName("com.donutauction.DonutAuctionClient");
+            Object auction = clientClass.getField("auction").get(null);
+            if (auction != null) {
+                Class<?> ac = auction.getClass();
+                active = ac.getField("active").getBoolean(auction);
+                Object item = ac.getField("itemName").get(auction);
+                Object who = ac.getField("leader").get(auction);
+                if (item != null) itemName = String.valueOf(item);
+                if (who != null && !String.valueOf(who).isBlank()) leader = String.valueOf(who);
+                topBid = MoneyFmt.compact(ac.getField("highBid").getDouble(auction));
+                long remaining = Math.max(0L, ac.getField("endAt").getLong(auction) - System.currentTimeMillis());
+                timeLeft = String.format("%d:%02d", remaining / 60000L, (remaining / 1000L) % 60L);
+            }
+        } catch (Throwable ignored) {}
+
+        Draw.round(c, contentX, y, contentW, 76, 10, 0xC51A2637);
+        Draw.round(c, contentX, y, 3, 76, 2, active ? 0xFF5DE6A2 : th.accent);
+        Draw.text(c, "LIVE AUCTION", contentX + 16, y + 12, th.sub);
+        Draw.text(c, itemName, contentX + 16, y + 32, th.text);
+        Draw.text(c, active ? "RUNNING" : "READY", contentX + contentW - 92, y + 15,
+                active ? 0xFF5DE6A2 : th.sub);
+
+        card(c, contentX, y + 88, half, 62, th, "TOP BID", topBid);
+        card(c, contentX + half + gap, y + 88, half, 62, th, "TIME LEFT", timeLeft);
+        card(c, contentX, y + 160, half, 62, th, "HIGH BIDDER", leader);
+        card(c, contentX + half + gap, y + 160, half, 62, th, "BID EXTENSION",
+                "3 sec: " + extensionEnabled());
+
+        String[] durations = {"30 seconds", "1 minute", "2 minutes", "5 minutes"};
+        long[] durationMs = {30000L, 60000L, 120000L, 300000L};
+        double[] bids = {1d, 10d, 100d, 1000d};
+        String[] bidLabels = {"$1", "$10", "$100", "$1,000"};
+        button(c, "auctionduration", contentX, y + 235, half, 30,
+                "Duration: " + durations[auctionDurationChoice], th,
+                () -> auctionDurationChoice = (auctionDurationChoice + 1) % durations.length);
+        button(c, "auctionminbid", contentX + half + gap, y + 235, half, 30,
+                "Minimum bid: " + bidLabels[auctionBidChoice], th,
+                () -> auctionBidChoice = (auctionBidChoice + 1) % bids.length);
+
+        if (active) {
+            button(c, "auctionstop", contentX, y + 276, contentW, 32,
+                    "END AUCTION", th, () -> {
+                        try {
+                            Class.forName("com.donutauction.DonutAuctionClient")
+                                .getMethod("cancel").invoke(null);
+                        } catch (Throwable ex) {
+                            MinecraftClient.getInstance().player.sendMessage(
+                                Text.literal("VØID: Could not end the auction."), false);
+                        }
+                    });
+        } else {
+            button(c, "auctionstart", contentX, y + 276, contentW, 32,
+                    "START AUCTION WITH HELD ITEM", th, () -> {
+                        try {
+                            MinecraftClient mc = MinecraftClient.getInstance();
+                            if (mc.player == null) return;
+                            Object stack = mc.player.getMainHandStack();
+                            if (stack == null || (Boolean) stack.getClass().getMethod("isEmpty").invoke(stack)) {
+                                mc.player.sendMessage(Text.literal("VØID: Hold the item you want to auction."), false);
+                                return;
+                            }
+                            String name = String.valueOf(stack.getClass().getMethod("getName").invoke(stack)
+                                .getClass().getMethod("getString").invoke(
+                                    stack.getClass().getMethod("getName").invoke(stack)));
+                            int count = ((Number) stack.getClass().getMethod("getCount").invoke(stack)).intValue();
+                            Class<?> dc = Class.forName("com.donutauction.DonutAuctionClient");
+                            dc.getMethod("startAuction", stack.getClass(), String.class, long.class,
+                                double.class, double.class, int.class)
+                                .invoke(null, stack, name, durationMs[auctionDurationChoice],
+                                    bids[auctionBidChoice], 0d, count);
+                        } catch (Throwable ex) {
+                            MinecraftClient.getInstance().player.sendMessage(
+                                Text.literal("VØID: Auction could not be started. Check the item in your hand."), false);
+                        }
+                    });
+        }
+        button(c, "auctionextension", contentX, y + 317, contentW, 28,
+                "Toggle 3-second bid extension", th, () -> {
+                    try {
+                        Class.forName("com.donutauction.DonutAuctionClient")
+                            .getMethod("toggleBidTimeExtension").invoke(null);
+                    } catch (Throwable ignored) {}
+                });
+        Draw.text(c, "Choose an item in your hand, set the duration and minimum bid, then start.",
+            contentX + 2, y + 354, th.sub);
+    }
+
+    private boolean extensionEnabled() {
+        try {
+            return Class.forName("com.donutauction.DonutAuctionClient")
+                .getField("addThreeSecondsPerBid").getBoolean(null);
+        } catch (Throwable ignored) { return false; }
+    }
+
+'''
+screen_text = screen_text[:start] + auction_method + screen_text[end:]
+screen.write_text(screen_text)
+
+# Release metadata for the integrated auction dashboard.
+meta = root / "src/main/resources/fabric.mod.json"
+data = json.loads(meta.read_text())
+data["version"] = "1.0.9"
+meta.write_text(json.dumps(data, indent=2) + chr(10))
+props = root / "gradle.properties"
+props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.9", props.read_text()))
