@@ -1225,3 +1225,54 @@ ledger.write_text(ledger_text)
 config = src / "Config.java"
 config_text = config.read_text().replace("public int theme = 0;", "public int theme = 1;")
 config.write_text(config_text)
+
+
+# Keep the auction binary bundled and initialized, but use reflection from the UI.
+# The supplied auction JAR is compiled in intermediary mappings, so direct Java imports
+# cannot be compiled against it without a separate remapped API artifact.
+build_file = root / "build.gradle"
+build_text = build_file.read_text().replace('    modCompileOnly files("libs/donut-auction-original.jar")\n', "")
+build_file.write_text(build_text)
+
+screen = src / "SettingsScreen.java"
+screen_text = screen.read_text()
+screen_text = screen_text.replace("import com.donutauction.Auction;\n", "")
+screen_text = screen_text.replace("import com.donutauction.AuctionScreen;\n", "")
+screen_text = screen_text.replace("import com.donutauction.DonutAuctionClient;\n", "")
+start = screen_text.index("    private void auctionPage(")
+end = screen_text.index("    private void hudPage(", start)
+screen_text = screen_text[:start] + r'''    private void auctionPage(DrawContext c, Theme th, int y) {
+        card(c, contentX, y, contentW, 105, th, "STREAM AUCTION", "Every detected viewer payment can become a bid");
+        boolean active = false;
+        String itemName = "Waiting for auction";
+        String topBid = "--";
+        try {
+            Class<?> clientClass = Class.forName("com.donutauction.DonutAuctionClient");
+            Object auction = clientClass.getField("auction").get(null);
+            if (auction != null) {
+                Class<?> auctionClass = auction.getClass();
+                active = auctionClass.getField("active").getBoolean(auction);
+                Object item = auctionClass.getField("itemName").get(auction);
+                Object bid = auctionClass.getField("highBid").get(auction);
+                if (item != null) itemName = String.valueOf(item);
+                if (bid instanceof Number n) topBid = MoneyFmt.compact(n.doubleValue());
+            }
+        } catch (Throwable ignored) {}
+        Draw.text(c, active ? "Auction running" : "No active auction", contentX + 16, y + 47,
+                active ? 0xFF5DE6A2 : th.sub);
+        button(c, "openauction", contentX + contentW - 178, y + 38, 160, 28, "OPEN AUCTION", th, () -> {
+            try {
+                Class<?> screenClass = Class.forName("com.donutauction.AuctionScreen");
+                Screen auctionScreen = (Screen) screenClass.getDeclaredConstructor().newInstance();
+                MinecraftClient.getInstance().setScreen(auctionScreen);
+            } catch (Throwable ignored) {
+                MinecraftClient.getInstance().player.sendMessage(Text.literal("VØID: Auction module could not be opened."), false);
+            }
+        });
+        card(c, contentX, y + 116, (contentW - 12) / 2, 74, th, "CURRENT ITEM", itemName);
+        card(c, contentX + (contentW - 12) / 2 + 12, y + 116, (contentW - 12) / 2, 74, th, "TOP BID", topBid);
+        card(c, contentX, y + 200, contentW, 68, th, "AUCTION MODULE", "Original Donut Auction module is loaded and initialized inside VØID.");
+    }
+
+''' + screen_text[end:]
+screen.write_text(screen_text)
