@@ -36,7 +36,7 @@ public final class BalanceTracker {
     private BalanceTracker() {}
 
     private static final Pattern MONEY =
-            Pattern.compile("\\$\\s*([\\d,]+(?:\\.\\d+)?)\\s*([kKmMbBtT])?(?![A-Za-z])");
+            Pattern.compile("\\\\$\\\\s*([\\\\d,]+(?:\\\\.\\\\d+)?)\\\\s*([kKmMbBtT])?(?![A-Za-z])");
 
     public static double balance = Double.NaN;
     public static double previous = Double.NaN;
