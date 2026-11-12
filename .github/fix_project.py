@@ -589,3 +589,617 @@ public class SettingsScreen extends Screen {
     @Override public boolean shouldPause() { return false; }
 }
 ''')
+
+
+# VØID 1.0.5: full stream-dashboard UI, live payment ledger, and auction entrypoint.
+import json
+
+# Expand the theme system to the 18 presets shown in the supplied reference.
+(src / "Theme.java").write_text(r'''package com.ninestyle;
+
+public enum Theme {
+    MIDNIGHT("Midnight",0xFF070B14,0xD91B2232,0xFF68D9F5,0xFFF3F7FF,0xFF9BAAC2),
+    FROSTED("Frosted Glass",0xFF101827,0xD92A3547,0xFF65DDF2,0xFFF4FAFF,0xFFA6B9CA),
+    NEBULA("Nebula",0xFF10091D,0xD927183A,0xFFB58AFF,0xFFFFF5FF,0xFFC3A8D8),
+    GALAXY("Galaxy",0xFF080D20,0xD91A2450,0xFF8D9CFF,0xFFF2F4FF,0xFF9CA9D5),
+    AURORA("Aurora",0xFF071A1B,0xD9163436,0xFF61E6C1,0xFFF0FFFC,0xFF9ACBC1),
+    SUNSET("Sunset",0xFF21101A,0xD9362032,0xFFFF9B78,0xFFFFF5F0,0xFFD8A89B),
+    OCEAN("Ocean",0xFF071B2A,0xD9153047,0xFF4FC3F7,0xFFEAF8FF,0xFF8FB4CC),
+    PURPLE("Purple Dream",0xFF170D2A,0xD9261747,0xFFB388FF,0xFFF5EDFF,0xFFA797C9),
+    PINK("Bubblegum",0xFF2B1025,0xD9411B39,0xFFFF8AD8,0xFFFFEEF9,0xFFD6A0C2),
+    MINT("Mint",0xFF09231D,0xD914392E,0xFF5EEAA8,0xFFEAFFF5,0xFF8FC4AE),
+    BLOOD("Blood Red",0xFF24090D,0xD93B1018,0xFFFF5A6A,0xFFFFEEEE,0xFFC99093),
+    EMBER("Ember",0xFF241108,0xD9402411,0xFFFFA94D,0xFFFFF3E6,0xFFCFA680),
+    ICE("Ice White",0xFF152331,0xD9DDEBF4,0xFF3AA8E0,0xFFF5FAFF,0xFF6B7F90),
+    LAVENDER("Lavender",0xFF1D1730,0xD9332850,0xFFD5A7FF,0xFFFFF7FF,0xFFC2B0D7),
+    MATRIX("Matrix",0xFF06150D,0xD9112B1A,0xFF65FF8A,0xFFEFFFF2,0xFF91C99C),
+    GOLD("Gold",0xFF211B0A,0xD93B3014,0xFFFFD76A,0xFFFFF9E8,0xFFD1C08D),
+    ROSE("Rose",0xFF25111B,0xD93D1F32,0xFFFF83A8,0xFFFFF2F6,0xFFD6A4B5),
+    VOID("VØID",0xFF050711,0xD91B1B31,0xFF9B7BFF,0xFFF4F1FF,0xFFAAA2C9);
+
+    public final String label;
+    public final int bg, panel, accent, text, sub;
+    Theme(String label,int bg,int panel,int accent,int text,int sub) {
+        this.label=label; this.bg=bg; this.panel=panel; this.accent=accent; this.text=text; this.sub=sub;
+    }
+    public static Theme of(int i) { return values()[Math.floorMod(i, values().length)]; }
+}
+''')
+
+# Persistent UI/tracker preferences.
+config = src / "Config.java"
+s = config.read_text()
+s = s.replace("public int checkSeconds = 60;", "public int checkSeconds = 5;")
+s = s.replace("public boolean hideReply = true;", "public boolean hideReply = true;\n    public boolean trackerEnabled = true;\n    public boolean glass = true;\n    public boolean customSky = true;\n    public boolean audioEnabled = true;\n    public int skyStyle = 0;")
+s = s.replace("if (checkSeconds < 30) checkSeconds = 60;", "if (checkSeconds < 5) checkSeconds = 5;\n        skyStyle = Math.floorMod(skyStyle, 4);")
+config.write_text(s)
+
+palette = src / "Palette.java"
+s = palette.read_text()
+s = s.replace("public static final int[] OPACITY_PCT = {50, 70, 85, 100};", "public static final int[] OPACITY_PCT = {45, 55, 65, 75, 85, 95};")
+s = s.replace("public static final int[] INTERVALS = {30, 60, 120, 300};", "public static final int[] INTERVALS = {5, 10, 15, 30, 60};")
+palette.write_text(s)
+
+# Event ledger: immediate chat payment events plus balance decreases discovered by /bal.
+(src / "PaymentLedger.java").write_text(r'''package com.ninestyle;
+
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Deque;
+import java.util.List;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+public final class PaymentLedger {
+    private PaymentLedger() {}
+    public record Entry(String title, String detail, double amount, long at, boolean incoming, String source) {}
+    private static final Deque<Entry> ITEMS = new ArrayDeque<>();
+    private static final Pattern MONEY = Pattern.compile("(?i)\\$\\s*([0-9][0-9,]*(?:\\.[0-9]+)?)\\s*([kmbt])?");
+    private static String lastText = "";
+    private static long lastAt = 0L;
+    private static long lastOutgoingAt = 0L;
+    private static double lastOutgoingAmount = 0d;
+
+    public static synchronized List<Entry> entries() { return new ArrayList<>(ITEMS); }
+    public static synchronized int count() { return ITEMS.size(); }
+
+    public static synchronized void onMessage(String message, boolean overlay) {
+        if (overlay || message == null) return;
+        String low = message.toLowerCase(Locale.ROOT);
+        if (!(low.contains("paid") || low.contains("received") || low.contains("sent you")
+                || low.contains("transferred") || low.contains("purchased") || low.contains("payment"))) return;
+        long now = System.currentTimeMillis();
+        if (message.equals(lastText) && now - lastAt < 1800L) return;
+        Matcher m = MONEY.matcher(message);
+        if (!m.find()) return;
+        double amount;
+        try {
+            amount = Double.parseDouble(m.group(1).replace(",", ""));
+            String suffix = m.group(2);
+            if (suffix != null) {
+                switch (Character.toLowerCase(suffix.charAt(0))) {
+                    case 'k' -> amount *= 1_000d;
+                    case 'm' -> amount *= 1_000_000d;
+                    case 'b' -> amount *= 1_000_000_000d;
+                    case 't' -> amount *= 1_000_000_000_000d;
+                    default -> {}
+                }
+            }
+        } catch (RuntimeException ex) { return; }
+        boolean incoming = low.contains("paid you") || low.contains("received") || low.contains("sent you");
+        boolean outgoing = !incoming && (low.contains("you paid") || low.contains("you sent")
+                || low.contains("transferred") || low.contains("purchased") || low.contains("payment"));
+        if (!incoming && !outgoing) return;
+        String who = "Player";
+        Matcher name = Pattern.compile("([A-Za-z0-9_]{1,16})\\s+(?:has\\s+)?paid\\s+you", Pattern.CASE_INSENSITIVE).matcher(message);
+        if (name.find()) who = name.group(1);
+        else {
+            Matcher from = Pattern.compile("(?i)from\\s+([A-Za-z0-9_]{1,16})").matcher(message);
+            if (from.find()) who = from.group(1);
+            else {
+                Matcher to = Pattern.compile("(?i)to\\s+([A-Za-z0-9_]{1,16})").matcher(message);
+                if (to.find()) who = to.group(1);
+            }
+        }
+        lastText = message;
+        lastAt = now;
+        if (outgoing) {
+            lastOutgoingAt = now;
+            lastOutgoingAmount = amount;
+            add(new Entry("Payment sent", "To " + who, -amount, now, false, "CHAT"));
+        } else {
+            add(new Entry("Payment received", "From " + who, amount, now, true, "CHAT"));
+        }
+    }
+
+    public static synchronized void recordBalanceDecrease(double amount, double newBalance) {
+        if (!(amount > 0d)) return;
+        long now = System.currentTimeMillis();
+        // If the chat already told us about this outgoing payment, don't duplicate it.
+        if (now - lastOutgoingAt < 12000L
+                && Math.abs(lastOutgoingAmount - amount) <= Math.max(1d, amount * 0.02d)) {
+            lastOutgoingAt = 0L;
+            lastOutgoingAmount = 0d;
+            return;
+        }
+        add(new Entry("Balance decreased", "Balance check → " + MoneyFmt.compact(newBalance),
+                -amount, now, false, "BALANCE"));
+    }
+
+    private static void add(Entry entry) {
+        ITEMS.addFirst(entry);
+        while (ITEMS.size() > 60) ITEMS.removeLast();
+    }
+}
+''')
+
+# Replace the polling logic: it works even when the on-screen HUD is hidden.
+(src / "BalanceTracker.java").write_text(r'''package com.ninestyle;
+
+import net.minecraft.client.MinecraftClient;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+public final class BalanceTracker {
+    private BalanceTracker() {}
+    private static final Pattern LABELED = Pattern.compile(
+        "(?i)(?:balance|bal)\\D{0,30}\\$?\\s*([0-9][0-9,]*(?:\\.[0-9]+)?)\\s*([kmbt])?"
+    );
+    private static final Pattern MONEY = Pattern.compile(
+        "(?i)\\$\\s*([0-9][0-9,]*(?:\\.[0-9]+)?)\\s*([kmbt])?"
+    );
+    public static double balance = Double.NaN;
+    public static double startingBalance = Double.NaN;
+    public static double previous = Double.NaN;
+    public static double lastChange = Double.NaN;
+    private static long nextRequestAt = 0L;
+    private static long awaitUntil = 0L;
+    private static boolean requestPending = false;
+    private static int joinTicks = 0;
+
+    public static boolean hasData() { return !Double.isNaN(balance); }
+
+    public static void tick(MinecraftClient mc) {
+        if (mc.player == null || mc.getNetworkHandler() == null) {
+            joinTicks = 0;
+            requestPending = false;
+            awaitUntil = 0L;
+            nextRequestAt = 0L;
+            balance = startingBalance = previous = lastChange = Double.NaN;
+            return;
+        }
+        Config cfg = Config.get();
+        if (!cfg.trackerEnabled) return;
+        if (joinTicks < 40) {
+            joinTicks++;
+            if (joinTicks < 40) return;
+        }
+        long now = System.currentTimeMillis();
+        if (requestPending && now <= awaitUntil) return;
+        if (now < nextRequestAt) return;
+        requestPending = true;
+        awaitUntil = now + 12000L;
+        nextRequestAt = now + Math.max(5, cfg.checkSeconds) * 1000L;
+        mc.getNetworkHandler().sendChatCommand("bal");
+    }
+
+    public static boolean onMessage(String msg, boolean overlay) {
+        if (overlay || !requestPending || System.currentTimeMillis() > awaitUntil || msg == null) return false;
+        String low = msg.toLowerCase();
+        if (low.contains("paid") || low.contains("received") || low.contains("sent")
+                || low.contains("transfer") || low.contains("purchase")) return false;
+        Matcher m = LABELED.matcher(msg);
+        if (!m.find()) {
+            m = MONEY.matcher(msg);
+            if (!m.find()) return false;
+        }
+        double value;
+        try {
+            value = Double.parseDouble(m.group(1).replace(",", ""));
+            String suffix = m.group(2);
+            if (suffix != null) {
+                switch (Character.toLowerCase(suffix.charAt(0))) {
+                    case 'k' -> value *= 1_000d;
+                    case 'm' -> value *= 1_000_000d;
+                    case 'b' -> value *= 1_000_000_000d;
+                    case 't' -> value *= 1_000_000_000_000d;
+                    default -> {}
+                }
+            }
+        } catch (RuntimeException ex) { return false; }
+
+        if (Double.isNaN(startingBalance)) {
+            startingBalance = value;
+            balance = value;
+            previous = value;
+            lastChange = 0d;
+        } else {
+            previous = balance;
+            balance = value;
+            lastChange = value - previous;
+            if (value < previous) PaymentLedger.recordBalanceDecrease(previous - value, value);
+        }
+        requestPending = false;
+        awaitUntil = 0L;
+        return Config.get().hideReply;
+    }
+}
+''')
+
+# Apply theme colors and frosted-glass opacity to the in-game balance HUD.
+hud = src / "BalanceHud.java"
+s = hud.read_text()
+s = s.replace("int alpha = (int) (255 * (Palette.OPACITY_PCT[cfg.hudOpacity] / 100f));\n        int bg = (alpha << 24) | (Palette.HUD_BG[cfg.hudBg] & 0xFFFFFF);\n        int accent = Palette.HUD_TEXT[cfg.hudText];",
+'''Theme theme = Theme.of(cfg.theme);
+        int alpha = (int) (255 * (Palette.OPACITY_PCT[cfg.hudOpacity] / 100f) * (cfg.glass ? 0.86f : 1f));
+        int bg = (alpha << 24) | (theme.panel & 0xFFFFFF);
+        int accent = theme.accent;''')
+hud.write_text(s)
+
+# Load the bundled auction mod's client initializer and keep /opiod as the settings command.
+client = src / "NineStyleClient.java"
+client.write_text(r'''package com.ninestyle;
+
+import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
+import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.util.Identifier;
+
+public class NineStyleClient implements ClientModInitializer {
+    @Override
+    public void onInitializeClient() {
+        Config.load();
+        HudElementRegistry.addLast(Identifier.of("ninestyle", "balance"),
+                (context, tickCounter) -> BalanceHud.render(context));
+        ClientTickEvents.END_CLIENT_TICK.register(BalanceTracker::tick);
+        ClientReceiveMessageEvents.ALLOW_GAME.register((message, overlay) -> {
+            String text = message.getString();
+            PaymentLedger.onMessage(text, overlay);
+            return !BalanceTracker.onMessage(text, overlay);
+        });
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
+            dispatcher.register(ClientCommandManager.literal("opiod").executes(ctx -> {
+                MinecraftClient mc = MinecraftClient.getInstance();
+                mc.send(() -> mc.setScreen(new SettingsScreen()));
+                return 1;
+            }));
+            dispatcher.register(ClientCommandManager.literal("9ugh").executes(ctx -> {
+                MinecraftClient mc = MinecraftClient.getInstance();
+                mc.send(() -> mc.setScreen(new SettingsScreen()));
+                return 1;
+            }));
+        });
+    }
+}
+''')
+
+# Merge the original auction module into this mod's Fabric client entrypoints.
+meta = root / "src/main/resources/fabric.mod.json"
+data = json.loads(meta.read_text())
+data["name"] = "VØID Streamer Essentials"
+data["description"] = "VØID — modular streamer dashboard, payment tracker and auctions"
+eps = data.setdefault("entrypoints", {}).setdefault("client", [])
+if "com.donutauction.DonutAuctionClient" not in eps:
+    eps.append("com.donutauction.DonutAuctionClient")
+data["version"] = "1.0.5"
+meta.write_text(json.dumps(data, indent=2) + "\n")
+
+props = root / "gradle.properties"
+s = props.read_text()
+import re
+s = re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.5", s)
+props.write_text(s)
+
+# Full dashboard inspired by the uploaded reference video.
+(src / "SettingsScreen.java").write_text(r'''package com.ninestyle;
+
+import com.donutauction.Auction;
+import com.donutauction.AuctionScreen;
+import com.donutauction.DonutAuctionClient;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.text.Text;
+import org.lwjgl.glfw.GLFW;
+import java.util.List;
+import java.util.Locale;
+
+public class SettingsScreen extends Screen {
+    private String page = "Tracker";
+    private boolean prevDown, justPressed;
+    private int mx, my;
+    private long transitionAt = 0L;
+    private static final String[] NAV = {"Tracker","Auction","HUD","Visuals","Appearance","Audio","Settings"};
+    private static final String[] SKY = {"Nebula","Galaxy","Aurora","Sunset"};
+
+    private int left, top, panelW, panelH, contentX, contentW;
+    public SettingsScreen() { super(Text.literal("VØID Stream Essentials")); }
+
+    @Override protected void init() { prevDown = down(); }
+
+    private static boolean down() {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        return GLFW.glfwGetMouseButton(mc.getWindow().getHandle(), GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS;
+    }
+
+    private void changePage(String next) {
+        if (!page.equals(next)) {
+            page = next;
+            transitionAt = System.currentTimeMillis();
+        }
+    }
+
+    @Override public void render(DrawContext c, int mouseX, int mouseY, float delta) {
+        mx = mouseX; my = mouseY;
+        boolean isDown = down();
+        justPressed = isDown && !prevDown;
+        prevDown = isDown;
+        Config cfg = Config.get();
+        Theme th = Theme.of(cfg.theme);
+
+        drawSpace(c, th);
+        panelW = Math.min(790, width - 24);
+        panelH = Math.min(450, height - 20);
+        left = (width - panelW) / 2;
+        top = (height - panelH) / 2;
+
+        Draw.round(c, left - 1, top - 1, panelW + 2, panelH + 2, 15, 0xA85D6C9C);
+        Draw.round(c, left, top, panelW, panelH, 14, 0xD00A101B);
+        Draw.round(c, left + 1, top + 1, panelW - 2, panelH - 2, 13, 0xC80D1421);
+
+        int sideW = 148;
+        Draw.round(c, left + 8, top + 8, sideW, panelH - 16, 10, 0xC8172030);
+        Draw.text(c, "VØID", left + 22, top + 18, th.accent);
+        Draw.text(c, "STREAM ESSENTIALS", left + 22, top + 32, th.sub);
+        Draw.round(c, left + 20, top + 50, 118, 1, 0, 0x665D7899);
+        for (int i = 0; i < NAV.length; i++) {
+            String name = NAV[i];
+            int by = top + 65 + i * 37;
+            boolean selected = page.equals(name);
+            boolean over = inside(left + 15, by - 4, 132, 29);
+            if (selected) {
+                Draw.round(c, left + 15, by - 4, 132, 29, 7, 0x663E5274);
+                Draw.round(c, left + 15, by - 4, 3, 29, 2, th.accent);
+            } else if (over) Draw.round(c, left + 15, by - 4, 132, 29, 7, 0x443E5274);
+            Draw.text(c, iconFor(name) + "  " + name, left + 25, by + 5, selected ? th.text : th.sub);
+            if (over && justPressed) changePage(name);
+        }
+        Draw.round(c, left + 18, top + panelH - 49, 124, 1, 0, 0x665D7899);
+        Draw.round(c, left + 21, top + panelH - 35, 8, 8, 4, cfg.trackerEnabled ? 0xFF55E6A5 : 0xFFFF7D87);
+        Draw.text(c, cfg.trackerEnabled ? "Tracker online" : "Tracker paused", left + 35, top + panelH - 36, th.sub);
+        Draw.text(c, "BUILD  1.0.5", left + 22, top + panelH - 20, 0xFF75839A);
+
+        contentX = left + 170;
+        contentW = panelW - 184;
+        topBar(c, th);
+        float progress = transitionAt == 0L ? 1f : Math.min(1f, (System.currentTimeMillis() - transitionAt) / 230f);
+        float slide = (1f - ease(progress)) * 18f;
+        c.getMatrices().pushMatrix();
+        c.getMatrices().translate(slide, 0f);
+        renderPage(c, th, cfg);
+        c.getMatrices().popMatrix();
+        if (progress < 1f) {
+            int a = (int)((1f - progress) * 70f);
+            c.fill(contentX, top + 65, left + panelW - 10, top + panelH - 10, (a << 24));
+        }
+    }
+
+    private void drawSpace(DrawContext c, Theme th) {
+        Config cfg = Config.get();
+        c.fill(0, 0, width, height, th.bg);
+        if (cfg.customSky) {
+            int glow = switch (cfg.skyStyle) {
+                case 1 -> 0x332B4DFF;
+                case 2 -> 0x3328D6B0;
+                case 3 -> 0x33FF8B52;
+                default -> 0x334D2A82;
+            };
+            c.fill(0, 0, width, height, glow);
+            for (int i = 0; i < 5; i++) {
+                int x = Math.floorMod(i * 191 + 67, Math.max(1, width));
+                int y = Math.floorMod(i * 127 + 33, Math.max(1, height));
+                Draw.round(c, x - 75, y - 28, 150, 56, 28, (i % 2 == 0) ? glow : 0x182C6DAA);
+            }
+        }
+        long tick = System.currentTimeMillis() / 850L;
+        for (int i = 0; i < 105; i++) {
+            int x = Math.floorMod(i * 137 + (int)(tick * (i % 3 + 1)), Math.max(1, width));
+            int y = Math.floorMod(i * 83 + i * i * 3, Math.max(1, height));
+            int alpha = 90 + (int)((Math.sin((tick + i) * 0.7) + 1) * 65);
+            c.fill(x, y, x + 1, y + 1, (alpha << 24) | 0xDDEBFF);
+        }
+        c.fill(0, 0, width, height, 0x25030914);
+    }
+
+    private void topBar(DrawContext c, Theme th) {
+        Draw.text(c, "FROSTS STREAM ESSENTIALS", contentX, top + 17, th.text);
+        Draw.text(c, "Your stream, organized.", contentX, top + 32, th.sub);
+        int pillX = left + panelW - 175;
+        Draw.round(c, pillX, top + 13, 158, 24, 12, 0x88303C51);
+        Draw.round(c, pillX + 9, top + 21, 6, 6, 3, 0xFF5CE6A8);
+        Draw.text(c, MinecraftClient.getInstance().player == null ? "Offline" : "Live session", pillX + 22, top + 21, th.text);
+        Draw.round(c, contentX, top + 52, contentW, 1, 0, 0x665D7899);
+    }
+
+    private void renderPage(DrawContext c, Theme th, Config cfg) {
+        int y = top + 69;
+        Draw.text(c, page.toUpperCase(Locale.ROOT), contentX, y, th.accent);
+        Draw.text(c, subtitle(), contentX, y + 14, th.sub);
+        switch (page) {
+            case "Tracker" -> trackerPage(c, th, cfg, y + 34);
+            case "Auction" -> auctionPage(c, th, y + 34);
+            case "HUD" -> hudPage(c, th, cfg, y + 34);
+            case "Visuals" -> visualsPage(c, th, cfg, y + 34);
+            case "Appearance" -> appearancePage(c, th, cfg, y + 34);
+            case "Audio" -> audioPage(c, th, cfg, y + 34);
+            default -> settingsPage(c, th, cfg, y + 34);
+        }
+    }
+
+    private String subtitle() {
+        return switch (page) {
+            case "Tracker" -> "Counts every payment and watches your balance";
+            case "Auction" -> "Turn live viewer payments into auction bids";
+            case "HUD" -> "Arrange the on-screen stream overlay";
+            case "Visuals" -> "Choose the sky behind your dashboard";
+            case "Appearance" -> "18 presets to make the client yours";
+            case "Audio" -> "Auction sounds and stream feedback";
+            default -> "Tracker behavior and client preferences";
+        };
+    }
+
+    private void trackerPage(DrawContext c, Theme th, Config cfg, int y) {
+        int half = (contentW - 12) / 2;
+        card(c, contentX, y, contentW, 111, th, "LIVE PROFIT TRACKER", "Counts every payment from chat");
+        button(c, "tracker", contentX + contentW - 78, y + 12, 64, 20,
+                cfg.trackerEnabled ? "ON" : "OFF", th, () -> { cfg.trackerEnabled = !cfg.trackerEnabled; Config.save(); });
+        double net = Double.isNaN(BalanceTracker.balance) || Double.isNaN(BalanceTracker.startingBalance)
+                ? Double.NaN : BalanceTracker.balance - BalanceTracker.startingBalance;
+        String profit = Double.isNaN(net) ? "Waiting for /bal" : MoneyFmt.signed(net);
+        Draw.text(c, profit, contentX + 17, y + 47, Double.isNaN(net) ? th.sub : (net >= 0 ? 0xFF5DE6A2 : 0xFFFF788A));
+        Draw.text(c, "Since first balance check", contentX + 18, y + 76, th.sub);
+        card(c, contentX, y + 121, half, 56, th, "STARTING", Double.isNaN(BalanceTracker.startingBalance) ? "--" : MoneyFmt.compact(BalanceTracker.startingBalance));
+        card(c, contentX + half + 12, y + 121, half, 56, th, "CURRENT", Double.isNaN(BalanceTracker.balance) ? "--" : MoneyFmt.compact(BalanceTracker.balance));
+        int ly = y + 189;
+        card(c, contentX, ly, contentW, 142, th, "RECENT ACTIVITY", PaymentLedger.count() + " events recorded this session");
+        List<PaymentLedger.Entry> items = PaymentLedger.entries();
+        if (items.isEmpty()) {
+            Draw.text(c, "Payments and balance decreases will appear here.", contentX + 15, ly + 58, th.sub);
+        } else {
+            int count = Math.min(4, items.size());
+            for (int i = 0; i < count; i++) {
+                PaymentLedger.Entry e = items.get(i);
+                int rowY = ly + 47 + i * 22;
+                Draw.round(c, contentX + 14, rowY + 3, 6, 6, 3, e.incoming() ? 0xFF5DE6A2 : 0xFFFF788A);
+                Draw.text(c, e.title(), contentX + 27, rowY, th.text);
+                Draw.text(c, e.detail(), contentX + 160, rowY, th.sub);
+                String amount = MoneyFmt.signed(e.amount());
+                Draw.text(c, amount, contentX + contentW - 15 - Draw.width(amount), rowY, e.incoming() ? 0xFF5DE6A2 : 0xFFFF788A);
+            }
+        }
+    }
+
+    private void auctionPage(DrawContext c, Theme th, int y) {
+        card(c, contentX, y, contentW, 105, th, "STREAM AUCTION", "Every detected viewer payment can become a bid");
+        Auction a = DonutAuctionClient.auction;
+        String status = a != null && a.active ? "Auction running" : "No active auction";
+        Draw.text(c, status, contentX + 16, y + 47, a != null && a.active ? 0xFF5DE6A2 : th.sub);
+        button(c, "openauction", contentX + contentW - 178, y + 38, 160, 28, "OPEN AUCTION", th,
+                () -> MinecraftClient.getInstance().setScreen(new AuctionScreen()));
+        card(c, contentX, y + 116, (contentW - 12) / 2, 74, th, "CURRENT ITEM",
+                a == null ? "Waiting for auction" : a.itemName);
+        card(c, contentX + (contentW - 12) / 2 + 12, y + 116, (contentW - 12) / 2, 74, th, "TOP BID",
+                a == null ? "--" : MoneyFmt.compact(a.highBid));
+        card(c, contentX, y + 200, contentW, 68, th, "AUCTION MODULE", "Original Donut Auction module is loaded and initialized inside VØID.");
+    }
+
+    private void hudPage(DrawContext c, Theme th, Config cfg, int y) {
+        int half = (contentW - 12) / 2;
+        card(c, contentX, y, contentW, 54, th, "HUD OVERLAY", "Live balance panel shown in-game");
+        button(c, "hud", contentX + contentW - 90, y + 15, 76, 24, cfg.hudEnabled ? "ON" : "OFF", th,
+                () -> { cfg.hudEnabled = !cfg.hudEnabled; Config.save(); });
+        button(c, "glass", contentX, y + 65, half, 29, "Frosted glass: " + (cfg.glass ? "ON" : "OFF"), th,
+                () -> { cfg.glass = !cfg.glass; Config.save(); });
+        button(c, "opacity", contentX + half + 12, y + 65, half, 29,
+                "Opacity: " + Palette.OPACITY_PCT[cfg.hudOpacity] + "%", th, () -> {
+                    cfg.hudOpacity = (cfg.hudOpacity + 1) % Palette.OPACITY_PCT.length; Config.save();
+                });
+        button(c, "reset", contentX, y + 105, half, 29, "Reset HUD position", th, () -> {
+            cfg.hudX = 8; cfg.hudY = 8; Config.save();
+        });
+        Draw.text(c, "HUD preview", contentX, y + 153, th.sub);
+        BalanceHud.draw(c, contentX + 8, y + 174, !BalanceTracker.hasData());
+    }
+
+    private void visualsPage(DrawContext c, Theme th, Config cfg, int y) {
+        card(c, contentX, y, contentW, 67, th, "CUSTOM SKY", "Nebula, galaxy, aurora and sunset backgrounds");
+        button(c, "sky", contentX + contentW - 86, y + 20, 72, 25, cfg.customSky ? "ON" : "OFF", th,
+                () -> { cfg.customSky = !cfg.customSky; Config.save(); });
+        int gap = 9, bw = (contentW - gap * 3) / 4;
+        for (int i = 0; i < SKY.length; i++) {
+            final int idx = i;
+            button(c, "sky" + i, contentX + i * (bw + gap), y + 81, bw, 43,
+                    (cfg.skyStyle == i ? "✓ " : "") + SKY[i], th, () -> { cfg.skyStyle = idx; Config.save(); });
+        }
+        card(c, contentX, y + 138, contentW, 90, th, "STARFIELD", "Animated stars and a soft color haze sit behind the translucent dashboard.");
+    }
+
+    private void appearancePage(DrawContext c, Theme th, Config cfg, int y) {
+        Theme[] all = Theme.values();
+        int cols = 3, gap = 8, bw = (contentW - gap * (cols - 1)) / cols;
+        for (int i = 0; i < all.length; i++) {
+            int col = i % cols, row = i / cols;
+            int bx = contentX + col * (bw + gap), by = y + row * 43;
+            final int idx = i;
+            boolean selected = cfg.theme == i;
+            Draw.round(c, bx, by, bw, 35, 7, selected ? 0xAA4A5876 : 0xAA202B3D);
+            Draw.round(c, bx + 8, by + 9, 16, 16, 8, all[i].accent);
+            Draw.text(c, all[i].label, bx + 31, by + 13, selected ? th.text : th.sub);
+            if (inside(bx, by, bw, 35) && justPressed) { cfg.theme = idx; Config.save(); }
+        }
+        card(c, contentX, y + 273, contentW, 48, th, "FROSTED GLASS", "Theme colors apply to the dashboard and the in-game HUD.");
+    }
+
+    private void audioPage(DrawContext c, Theme th, Config cfg, int y) {
+        card(c, contentX, y, contentW, 77, th, "AUCTION FEEDBACK", "The bundled auction module plays bid and countdown sounds.");
+        card(c, contentX, y + 89, contentW, 77, th, "PAYMENT ALERTS", "Incoming payments are recorded from server chat messages.");
+        card(c, contentX, y + 178, contentW, 77, th, "SOUND CONTROL", "Use Minecraft's Music & Sounds settings to adjust auction audio.");
+    }
+
+    private void settingsPage(DrawContext c, Theme th, Config cfg, int y) {
+        int half = (contentW - 12) / 2;
+        card(c, contentX, y, contentW, 61, th, "BALANCE POLLING", "Checks /bal even while the HUD is hidden");
+        button(c, "interval", contentX, y + 75, half, 30, "Every " + cfg.checkSeconds + " seconds", th, () -> {
+            int idx = 0;
+            for (int i = 0; i < Palette.INTERVALS.length; i++) if (Palette.INTERVALS[i] == cfg.checkSeconds) idx = i;
+            cfg.checkSeconds = Palette.INTERVALS[(idx + 1) % Palette.INTERVALS.length]; Config.save();
+        });
+        button(c, "hide", contentX + half + 12, y + 75, half, 30, "Hide /bal reply: " + (cfg.hideReply ? "ON" : "OFF"), th,
+                () -> { cfg.hideReply = !cfg.hideReply; Config.save(); });
+        button(c, "track", contentX, y + 117, half, 30, "Tracker: " + (cfg.trackerEnabled ? "ON" : "OFF"), th,
+                () -> { cfg.trackerEnabled = !cfg.trackerEnabled; Config.save(); });
+        card(c, contentX, y + 164, contentW, 74, th, "COMMAND", "Type /opiod any time to open this dashboard.");
+    }
+
+    private void card(DrawContext c, int x, int y, int w, int h, Theme th, String title, String sub) {
+        Draw.round(c, x, y, w, h, 9, 0xB51A2637);
+        Draw.round(c, x, y, w, 2, 1, 0x887C91B5);
+        Draw.text(c, title, x + 14, y + 11, th.sub);
+        Draw.text(c, sub, x + 14, y + 32, th.text);
+    }
+
+    private void button(DrawContext c, String id, int x, int y, int w, int h, String label, Theme th, Runnable action) {
+        boolean over = inside(x, y, w, h);
+        Draw.round(c, x, y, w, h, 7, over ? 0xCC3B4C68 : 0xAA253247);
+        Draw.round(c, x, y, 2, h, 1, th.accent);
+        Draw.text(c, label, x + (w - Draw.width(label)) / 2, y + (h - 9) / 2, th.text);
+        if (over && justPressed) action.run();
+    }
+
+    private boolean inside(int x, int y, int w, int h) {
+        return mx >= x && mx < x + w && my >= y && my < y + h;
+    }
+
+    private static String iconFor(String name) {
+        return switch (name) {
+            case "Tracker" -> "◉";
+            case "Auction" -> "◇";
+            case "HUD" -> "▣";
+            case "Visuals" -> "✧";
+            case "Appearance" -> "◈";
+            case "Audio" -> "♫";
+            default -> "⚙";
+        };
+    }
+
+    private static float ease(float t) { return 1f - (float)Math.pow(1f - Math.max(0f, Math.min(1f, t)), 3); }
+
+    @Override public boolean shouldPause() { return false; }
+}
+''')
+
