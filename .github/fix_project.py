@@ -440,3 +440,152 @@ if screen.exists():
     s = s.replace('"9ugh Style"', '"VØID"')
     s = s.replace('"Balance Tracker  (/bal)"', '"VØID BALANCE TRACKER  (/bal)"')
     screen.write_text(s)
+
+
+# VØID redesigned settings window: sidebar navigation and larger modular panels.
+screen = src / "SettingsScreen.java"
+screen.write_text(r'''package com.ninestyle;
+
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.text.Text;
+import org.lwjgl.glfw.GLFW;
+import java.util.HashMap;
+import java.util.Map;
+
+public class SettingsScreen extends Screen {
+    private final Map<String, Float> hover = new HashMap<>();
+    private boolean prevDown, justPressed, blocked;
+    private int mx, my;
+    private String page = "Overview";
+
+    private static final int BG = 0xE90A0D16;
+    private static final int PANEL = 0xE9161B28;
+    private static final int PANEL2 = 0xE91D2433;
+    private static final int ACCENT = 0xFF9B7BFF;
+    private static final int CYAN = 0xFF65DDF2;
+    private static final int WHITE = 0xFFF1F2FA;
+    private static final int MUTED = 0xFF929AAF;
+
+    public SettingsScreen() { super(Text.literal("VØID")); }
+
+    @Override protected void init() { prevDown = down(); }
+
+    private static boolean down() {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        return GLFW.glfwGetMouseButton(mc.getWindow().getHandle(), GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS;
+    }
+
+    @Override public void render(DrawContext c, int mouseX, int mouseY, float delta) {
+        mx = mouseX; my = mouseY;
+        boolean isDown = down();
+        justPressed = isDown && !prevDown;
+        prevDown = isDown;
+
+        c.fill(0, 0, width, height, 0x9903070D);
+        int pw = Math.min(650, width - 28), ph = Math.min(390, height - 24);
+        int px = (width - pw) / 2, py = (height - ph) / 2;
+        Draw.round(c, px, py, pw, ph, 13, 0xFF66518F);
+        Draw.round(c, px + 1, py + 1, pw - 2, ph - 2, 12, BG);
+
+        // Sidebar
+        Draw.round(c, px + 8, py + 8, 148, ph - 16, 9, PANEL);
+        Draw.text(c, "VØID", px + 22, py + 22, ACCENT);
+        Draw.text(c, "STREAMER ESSENTIALS", px + 22, py + 36, MUTED);
+        String[] nav = {"Overview", "Balance", "HUD Layout", "Themes", "Payments", "Auctions"};
+        int ny = py + 67;
+        for (int i = 0; i < nav.length; i++) {
+            final String name = nav[i];
+            int by = ny + i * 34;
+            boolean selected = page.equals(name);
+            if (selected) Draw.round(c, px + 16, by - 5, 132, 27, 6, 0xFF342B50);
+            if (selected) Draw.round(c, px + 16, by - 5, 3, 27, 2, ACCENT);
+            boolean over = mx >= px + 16 && mx < px + 148 && my >= by - 5 && my < by + 22;
+            Draw.text(c, name, px + 27, by + 3, selected ? WHITE : (over ? CYAN : MUTED));
+            if (over && justPressed) page = name;
+        }
+        Draw.text(c, "CLIENT BUILD  1.0.5", px + 20, py + ph - 26, MUTED);
+
+        int cx = px + 174, cw = pw - 190;
+        Draw.text(c, page.toUpperCase(), cx, py + 20, WHITE);
+        Draw.text(c, "Customize your stream setup", cx, py + 36, MUTED);
+        blocked = false;
+
+        switch (page) {
+            case "Overview" -> overview(c, cx, py, cw);
+            case "Balance" -> balance(c, cx, py, cw);
+            case "HUD Layout" -> hud(c, cx, py, cw);
+            case "Themes" -> themes(c, cx, py, cw);
+            case "Payments" -> unavailable(c, cx, py, cw, "PAYMENT ACTIVITY", "Payment event tracking is not connected yet.");
+            case "Auctions" -> unavailable(c, cx, py, cw, "AUCTION TRACKER", "Auction tracking is not connected yet.");
+        }
+        Draw.text(c, "ESC  Close settings", px + pw - 130, py + ph - 20, MUTED);
+    }
+
+    private void overview(DrawContext c, int x, int y, int w) {
+        card(c, x, y + 62, w, 88, "BALANCE TRACKER", "Tracks your change from your first successful /bal");
+        String net = Double.isNaN(BalanceTracker.lastChange) ? "Waiting for /bal" : MoneyFmt.signed(BalanceTracker.balance - BalanceTracker.startingBalance);
+        Draw.text(c, net, x + 14, y + 105, CYAN);
+        card(c, x, y + 160, (w - 10) / 2, 78, "HUD STATUS", Config.get().hudEnabled ? "Enabled" : "Disabled");
+        card(c, x + (w - 10) / 2 + 10, y + 160, (w - 10) / 2, 78, "ACTIVE THEME", Theme.of(Config.get().theme).label);
+        Draw.text(c, "Choose a section on the left to customize VØID.", x, y + 265, MUTED);
+    }
+
+    private void balance(DrawContext c, int x, int y, int w) {
+        Config cfg = Config.get();
+        card(c, x, y + 62, w, 66, "SESSION CHANGE", Double.isNaN(BalanceTracker.startingBalance) ? "Waiting for first /bal response" : MoneyFmt.signed(BalanceTracker.balance - BalanceTracker.startingBalance));
+        card(c, x, y + 138, w, 58, "STARTING BALANCE", Double.isNaN(BalanceTracker.startingBalance) ? "--" : MoneyFmt.compact(BalanceTracker.startingBalance));
+        card(c, x, y + 206, w, 58, "CURRENT BALANCE", Double.isNaN(BalanceTracker.balance) ? "--" : MoneyFmt.compact(BalanceTracker.balance));
+        button(c, "interval", x, y + 282, 190, 30, "Poll every " + cfg.checkSeconds + "s", () -> {
+            int[] a = Palette.INTERVALS; int i = 0;
+            for (int j = 0; j < a.length; j++) if (a[j] == cfg.checkSeconds) i = j;
+            cfg.checkSeconds = a[(i + 1) % a.length]; Config.save();
+        });
+        button(c, "hide", x + 202, y + 282, 190, 30, "Hide /bal reply: " + (cfg.hideReply ? "On" : "Off"), () -> { cfg.hideReply = !cfg.hideReply; Config.save(); });
+    }
+
+    private void hud(DrawContext c, int x, int y, int w) {
+        Config cfg = Config.get();
+        button(c, "toggle", x, y + 66, 190, 32, "HUD: " + (cfg.hudEnabled ? "On" : "Off"), () -> { cfg.hudEnabled = !cfg.hudEnabled; Config.save(); });
+        button(c, "bg", x + 202, y + 66, 190, 32, "Panel: " + Palette.HUD_BG_NAMES[cfg.hudBg], () -> { cfg.hudBg = (cfg.hudBg + 1) % Palette.HUD_BG.length; Config.save(); });
+        button(c, "txt", x, y + 110, 190, 32, "Accent: " + Palette.HUD_TEXT_NAMES[cfg.hudText], () -> { cfg.hudText = (cfg.hudText + 1) % Palette.HUD_TEXT.length; Config.save(); });
+        button(c, "opacity", x + 202, y + 110, 190, 32, "Opacity: " + Palette.OPACITY_PCT[cfg.hudOpacity] + "%", () -> { cfg.hudOpacity = (cfg.hudOpacity + 1) % Palette.OPACITY_PCT.length; Config.save(); });
+        button(c, "reset", x, y + 154, 190, 32, "Reset position", () -> { cfg.hudX = 8; cfg.hudY = 8; Config.save(); });
+        Draw.text(c, "Drag the HUD preview to reposition it.", x, y + 210, MUTED);
+        int[] sz = BalanceHud.size(!BalanceTracker.hasData());
+        BalanceHud.draw(c, Math.min(x + 8, width - sz[0] - 8), y + 245, !BalanceTracker.hasData());
+    }
+
+    private void themes(DrawContext c, int x, int y, int w) {
+        Theme[] all = Theme.values();
+        for (int i = 0; i < all.length; i++) {
+            int col = i % 2, row = i / 2;
+            int bx = x + col * ((w - 10) / 2 + 10), by = y + 66 + row * 48;
+            final int index = i;
+            button(c, "theme" + i, bx, by, (w - 10) / 2, 36, (Config.get().theme == i ? "✓  " : "") + all[i].label, () -> { Config.get().theme = index; Config.save(); });
+        }
+    }
+
+    private void unavailable(DrawContext c, int x, int y, int w, String heading, String desc) {
+        card(c, x, y + 72, w, 105, heading, desc);
+        Draw.text(c, "This section is a placeholder, not an active tracker.", x + 12, y + 145, MUTED);
+    }
+
+    private void card(DrawContext c, int x, int y, int w, int h, String title, String value) {
+        Draw.round(c, x, y, w, h, 8, PANEL);
+        Draw.text(c, title, x + 12, y + 12, MUTED);
+        Draw.text(c, value, x + 12, y + 34, WHITE);
+    }
+
+    private void button(DrawContext c, String id, int x, int y, int w, int h, String label, Runnable action) {
+        boolean over = mx >= x && mx < x + w && my >= y && my < y + h;
+        Draw.round(c, x, y, w, h, 7, over ? 0xFF3C3158 : PANEL2);
+        Draw.round(c, x, y, 3, h, 2, over ? CYAN : ACCENT);
+        Draw.text(c, label, x + 12, y + (h - 9) / 2, WHITE);
+        if (over && justPressed) action.run();
+    }
+
+    @Override public boolean shouldPause() { return false; }
+}
+''')
