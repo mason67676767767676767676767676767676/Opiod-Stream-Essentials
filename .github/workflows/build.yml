@@ -1,0 +1,22 @@
+name: Build Opiod Stream Essentials
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract project bundle
+        run: |
+          unzip -o Opiod-Stream-Essentials-combined-project.zip -d .
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 9.2.1
+      - run: gradle build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Opiod-Stream-Essentials
+          path: build/libs/Opiod-Stream-Essentials-*.jar
