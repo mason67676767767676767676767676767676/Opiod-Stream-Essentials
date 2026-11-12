@@ -145,3 +145,24 @@ meta = root / "src/main/resources/fabric.mod.json"
 if meta.exists():
     s = meta.read_text().replace('"version": "1.0.0"', '"version": "1.0.1"')
     meta.write_text(s)
+
+# Show net gain/loss relative to the first successful /bal response this session.
+tracker = src / "BalanceTracker.java"
+s = tracker.read_text()
+s = s.replace("public static double balance = Double.NaN;", "public static double balance = Double.NaN;\n    public static double startingBalance = Double.NaN;")
+s = s.replace("            awaitUntil = 0;\n            return;", "            awaitUntil = 0;\n            balance = Double.NaN;\n            startingBalance = Double.NaN;\n            previous = Double.NaN;\n            lastChange = Double.NaN;\n            return;")
+s = s.replace("        if (Double.isNaN(balance)) {\n            balance = v;", "        if (Double.isNaN(balance)) {\n            startingBalance = v;\n            balance = v;\n            lastChange = 0;")
+tracker.write_text(s)
+
+hud = src / "BalanceHud.java"
+s = hud.read_text()
+s = s.replace('double bal = preview ? 125450 : BalanceTracker.balance;', 'double bal = preview ? 2500 : (Double.isNaN(BalanceTracker.balance) || Double.isNaN(BalanceTracker.startingBalance) ? Double.NaN : BalanceTracker.balance - BalanceTracker.startingBalance);')
+s = s.replace('String big = Double.isNaN(bal) ? "$--" : MoneyFmt.compact(bal);', 'String big = Double.isNaN(bal) ? "$--" : MoneyFmt.signed(bal);')
+s = s.replace('Draw.width("YOUR BALANCE")', 'Draw.width("SINCE FIRST /BAL")')
+s = s.replace('"YOUR BALANCE", x + PAD', '"SINCE FIRST /BAL", x + PAD')
+s = s.replace('"Previous"', '"Starting"')
+s = s.replace('double prev = preview ? 122950 : BalanceTracker.previous;', 'double prev = preview ? 122950 : BalanceTracker.startingBalance;')
+s = s.replace('String p = Double.isNaN(prev) ? "--" : MoneyFmt.compact(prev);', 'String p = Double.isNaN(prev) ? "--" : MoneyFmt.compact(prev);')
+s = s.replace('"Change"', '"Current"')
+s = s.replace('String c = Double.isNaN(chg) ? "--" : MoneyFmt.signed(chg);', 'String c = Double.isNaN(BalanceTracker.balance) && !preview ? "--" : MoneyFmt.compact(preview ? 125450 : BalanceTracker.balance);')
+hud.write_text(s)
