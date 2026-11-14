@@ -1789,3 +1789,21 @@ data["version"] = "1.0.11"
 meta.write_text(json.dumps(data, indent=2) + chr(10))
 props = root / "gradle.properties"
 props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.11", props.read_text()))
+
+
+# VØID 1.0.14 crash hotfix: the bundled AuctionText class was compiled
+# against a different Minecraft Text ABI. Do not invoke the crashing legacy
+# AuctionEmbed renderer from the dashboard; the native VØID auction controls
+# and catalogue launcher remain available.
+import re
+for java_file in (root / "src/main/java").rglob("*.java"):
+    java_text = java_file.read_text()
+    java_text = re.sub(r"(?s)AuctionEmbed\\.render\\s*\\([^;]*\\);", "", java_text)
+    java_file.write_text(java_text)
+
+meta = root / "src/main/resources/fabric.mod.json"
+data = json.loads(meta.read_text())
+data["version"] = "1.0.14"
+meta.write_text(json.dumps(data, indent=2) + chr(10))
+props = root / "gradle.properties"
+props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.14", props.read_text()))
