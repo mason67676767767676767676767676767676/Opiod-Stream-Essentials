@@ -2002,3 +2002,300 @@ data["name"] = "VØID Streamer Essentials"
 meta.write_text(json.dumps(data, indent=2) + chr(10))
 props = root / "gradle.properties"
 props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.16", props.read_text()))
+
+
+
+# VØID 1.0.17: render the auction catalogue directly inside the dashboard,
+# add a high-contrast White appearance, and accelerate the starfield with streak blur.
+import re, json
+
+screen = src / "SettingsScreen.java"
+screen_text = screen.read_text()
+
+# Keep the catalogue state local to the VØID dashboard; never open AuctionScreen.
+class_decl = "public class SettingsScreen extends Screen {"
+extra_fields = """
+    private String auctionSearch = "";
+    private String selectedAuctionItemId = "";
+    private boolean auctionSearchFocused = false;
+    private int auctionScroll = 0;
+    private int auctionQuantity = 1;
+    private List<net.minecraft.item.Item> auctionItemCache;
+"""
+if "private String auctionSearch" not in screen_text:
+    screen_text = screen_text.replace(class_decl, class_decl + extra_fields, 1)
+
+if "import java.util.ArrayList;" not in screen_text:
+    screen_text = screen_text.replace("import java.util.List;", "import java.util.List;\nimport java.util.ArrayList;\nimport java.util.Comparator;", 1)
+
+# Replace the separate-screen launcher with an embedded searchable registry catalogue.
+a = screen_text.index("    private void auctionPage(")
+b = screen_text.index("    private void hudPage(", a)
+auction_method = r'''    private List<net.minecraft.item.Item> auctionItems() {
+        if (auctionItemCache == null) {
+            auctionItemCache = new ArrayList<>();
+            for (net.minecraft.item.Item item : net.minecraft.registry.Registries.ITEM) {
+                if (item == net.minecraft.item.Items.AIR) continue;
+                auctionItemCache.add(item);
+            }
+            auctionItemCache.sort(Comparator.comparing(item ->
+                    net.minecraft.registry.Registries.ITEM.getId(item).toString()));
+        }
+        return auctionItemCache;
+    }
+
+    private void auctionPage(DrawContext c, Theme th, int y) {
+        int gap = 8;
+        int half = (contentW - gap) / 2;
+        boolean active = false;
+        String itemName = "No active auction";
+        String leader = "Waiting for first bid";
+        String topBid = "$0";
+        String timeLeft = "Ready";
+        try {
+            com.donutauction.Auction auction = com.donutauction.DonutAuctionClient.auction;
+            if (auction != null) {
+                active = auction.active;
+                itemName = auction.itemName;
+                if (auction.leader != null && !auction.leader.isBlank()) leader = auction.leader;
+                topBid = MoneyFmt.compact(auction.highBid);
+                long remaining = Math.max(0L, auction.endAt - System.currentTimeMillis());
+                timeLeft = String.format("%d:%02d", remaining / 60000L, (remaining / 1000L) % 60L);
+            }
+        } catch (Throwable ignored) {}
+
+        Draw.round(c, contentX, y, contentW, 43, 9, 0xC51A2637);
+        Draw.round(c, contentX, y, 3, 43, 2, active ? 0xFF5DE6A2 : th.accent);
+        Draw.text(c, active ? "AUCTION LIVE" : "AUCTION BUILDER", contentX + 12, y + 7, th.sub);
+        Draw.text(c, itemName, contentX + 12, y + 23, th.text);
+        Draw.text(c, active ? topBid + "  •  " + timeLeft : "Choose an item below",
+                contentX + contentW - 150, y + 15, active ? 0xFF5DE6A2 : th.sub);
+
+        // Search is a real keyboard-editable field inside this page.
+        int searchY = y + 51;
+        Draw.round(c, contentX, searchY, contentW, 27, 6,
+                auctionSearchFocused ? 0xDD35445D : 0xB51A2637);
+        Draw.text(c, "⌕", contentX + 9, searchY + 8, th.accent);
+        String searchLabel = auctionSearch.isEmpty() ? "Search every Minecraft item..." : auctionSearch;
+        Draw.text(c, searchLabel, contentX + 26, searchY + 9, auctionSearch.isEmpty() ? th.sub : th.text);
+        if (inside(contentX, searchY, contentW, 27) && justPressed) auctionSearchFocused = true;
+
+        List<net.minecraft.item.Item> all = auctionItems();
+        List<net.minecraft.item.Item> filtered = new ArrayList<>();
+        String query = auctionSearch.toLowerCase(Locale.ROOT);
+        for (net.minecraft.item.Item item : all) {
+            String id = net.minecraft.registry.Registries.ITEM.getId(item).toString();
+            String label = item.getName().getString();
+            if (query.isEmpty() || id.toLowerCase(Locale.ROOT).contains(query)
+                    || label.toLowerCase(Locale.ROOT).contains(query)) filtered.add(item);
+        }
+
+        int listY = y + 84;
+        int listH = 132;
+        Draw.round(c, contentX, listY, contentW, listH, 8, 0x8F101A29);
+        int rowH = 30;
+        int rowGap = 2;
+        int itemW = (contentW - 18) / 2;
+        int start = Math.min(auctionScroll, Math.max(0, filtered.size() - 8));
+        for (int i = 0; i < 8 && start + i < filtered.size(); i++) {
+            net.minecraft.item.Item item = filtered.get(start + i);
+            String id = net.minecraft.registry.Registries.ITEM.getId(item).toString();
+            String label = item.getName().getString();
+            if (label.length() > 21) label = label.substring(0, 19) + "…";
+            int col = i % 2;
+            int row = i / 2;
+            int bx = contentX + 6 + col * (itemW + 6);
+            int by = listY + 6 + row * (rowH + rowGap);
+            boolean selected = id.equals(selectedAuctionItemId);
+            Draw.round(c, bx, by, itemW, rowH, 5,
+                    selected ? 0xCC465D80 : 0x88303D52);
+            Draw.text(c, label, bx + 8, by + 10, selected ? th.text : th.sub);
+            if (inside(bx, by, itemW, rowH) && justPressed) selectedAuctionItemId = id;
+        }
+        Draw.text(c, (start + 1) + "-" + Math.min(start + 8, filtered.size())
+                + " / " + filtered.size() + " items  •  ↑ / ↓ to browse",
+                contentX + 8, listY + listH - 10, th.sub);
+
+        String selectedName = "Select an item";
+        if (!selectedAuctionItemId.isEmpty()) {
+            try {
+                net.minecraft.item.Item selected = net.minecraft.registry.Registries.ITEM.get(
+                        net.minecraft.util.Identifier.of(selectedAuctionItemId));
+                if (selected != null && selected != net.minecraft.item.Items.AIR)
+                    selectedName = selected.getName().getString();
+            } catch (Throwable ignored) {}
+        }
+        int selectedY = y + 222;
+        Draw.text(c, "SELECTED", contentX + 2, selectedY + 3, th.sub);
+        Draw.text(c, selectedName, contentX + 72, selectedY + 3, th.text);
+
+        long[] durations = {60000L, 180000L, 300000L, 600000L};
+        String[] durationLabels = {"1 MIN", "3 MIN", "5 MIN", "10 MIN"};
+        double[] bids = {100d, 1000d, 10000d, 100000d};
+        String[] bidLabels = {"$100", "$1K", "$10K", "$100K"};
+        button(c, "auctionduration", contentX, y + 244, half, 27,
+                "TIME: " + durationLabels[Math.floorMod(auctionDurationChoice, durations.length)],
+                th, () -> auctionDurationChoice = (auctionDurationChoice + 1) % durations.length);
+        button(c, "auctionbid", contentX + half + gap, y + 244, half, 27,
+                "MIN BID: " + bidLabels[Math.floorMod(auctionBidChoice, bids.length)],
+                th, () -> auctionBidChoice = (auctionBidChoice + 1) % bids.length);
+
+        button(c, "auctionqty", contentX, y + 278, half, 27,
+                "QUANTITY: " + auctionQuantity, th,
+                () -> auctionQuantity = auctionQuantity >= 64 ? 1 : Math.min(64, auctionQuantity + 1));
+        button(c, "auctionextension", contentX + half + gap, y + 278, half, 27,
+                "BID EXTENSION: " + (extensionEnabled() ? "ON" : "OFF"), th,
+                com.donutauction.DonutAuctionClient::toggleBidTimeExtension);
+
+        button(c, "auctionstart", contentX, y + 312, active ? half : contentW, 28,
+                "START AUCTION INSIDE VØID", th, () -> {
+                    if (selectedAuctionItemId.isEmpty()) {
+                        if (MinecraftClient.getInstance().player != null)
+                            MinecraftClient.getInstance().player.sendMessage(Text.literal("VØID: Select an item first."), false);
+                        return;
+                    }
+                    try {
+                        net.minecraft.item.Item selected = net.minecraft.registry.Registries.ITEM.get(
+                                net.minecraft.util.Identifier.of(selectedAuctionItemId));
+                        net.minecraft.item.ItemStack stack = new net.minecraft.item.ItemStack(selected, auctionQuantity);
+                        Class.forName("com.donutauction.DonutAuctionClient")
+                            .getMethod("startAuction", stack.getClass(), String.class, long.class,
+                                double.class, double.class, int.class)
+                            .invoke(null, stack, selected.getName().getString(), durations[Math.floorMod(auctionDurationChoice, durations.length)],
+                                bids[Math.floorMod(auctionBidChoice, bids.length)], 0d, auctionQuantity);
+                    } catch (Throwable ex) {
+                        if (MinecraftClient.getInstance().player != null)
+                            MinecraftClient.getInstance().player.sendMessage(Text.literal("VØID: Could not start this auction. Check the auction settings."), false);
+                    }
+                });
+        if (active) {
+            button(c, "auctionstop", contentX + half + gap, y + 312, half, 28,
+                    "END AUCTION", th, com.donutauction.DonutAuctionClient::cancel);
+        }
+        Draw.text(c, "Click an item to select it. Click search, then type to filter the full registry.",
+                contentX + 2, y + 344, th.sub);
+    }
+
+    private boolean extensionEnabled() {
+        try {
+            return Class.forName("com.donutauction.DonutAuctionClient")
+                .getField("addThreeSecondsPerBid").getBoolean(null);
+        } catch (Throwable ignored) { return false; }
+    }
+
+'''
+screen_text = screen_text[:a] + auction_method + screen_text[b:]
+
+# Let search typing and arrow-key catalogue browsing stay inside the dashboard.
+if "public boolean charTyped(char chr, int modifiers)" not in screen_text:
+    key_methods = r'''
+    @Override
+    public boolean charTyped(char chr, int modifiers) {
+        if (page.equals("Auction") && auctionSearchFocused && !Character.isISOControl(chr)) {
+            if (auctionSearch.length() < 48) auctionSearch += chr;
+            auctionScroll = 0;
+            return true;
+        }
+        return super.charTyped(chr, modifiers);
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (page.equals("Auction") && auctionSearchFocused) {
+            if (keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_BACKSPACE) {
+                if (!auctionSearch.isEmpty()) auctionSearch = auctionSearch.substring(0, auctionSearch.length() - 1);
+                auctionScroll = 0;
+                return true;
+            }
+            if (keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER) {
+                auctionSearchFocused = false;
+                return true;
+            }
+            if (keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE) {
+                auctionSearchFocused = false;
+                return true;
+            }
+        }
+        if (page.equals("Auction")) {
+            if (keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_DOWN) { auctionScroll += 2; return true; }
+            if (keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_UP) { auctionScroll = Math.max(0, auctionScroll - 2); return true; }
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+'''
+    screen_text = screen_text.replace("    @Override public boolean shouldPause()", key_methods + "    @Override public boolean shouldPause()", 1)
+screen.write_text(screen_text)
+
+# Add a clean White theme as an additional Appearance tile.
+theme = src / "Theme.java"
+theme_text = theme.read_text()
+old_void = '    VOID("VØID",0xFF050711,0xD91B1B31,0xFF9B7BFF,0xFFF4F1FF,0xFFAAA2C9);'
+new_void = '    VOID("VØID",0xFF050711,0xD91B1B31,0xFF9B7BFF,0xFFF4F1FF,0xFFAAA2C9),\n    WHITE("White",0xFFF3F5F9,0xE8FFFFFF,0xFF526B8A,0xFF172033,0xFF596579);'
+if old_void in theme_text:
+    theme_text = theme_text.replace(old_void, new_void, 1)
+elif 'WHITE("White"' not in theme_text:
+    raise RuntimeError("Could not add White theme preset")
+theme.write_text(theme_text)
+
+# Lighten the main window, cards, and buttons when White is selected.
+screen_text = screen.read_text()
+screen_text = screen_text.replace("Draw.round(c, left, top, panelW, panelH, 14, 0xD00A101B);",
+"""boolean lightTheme = cfg.theme == Theme.WHITE.ordinal();
+        Draw.round(c, left, top, panelW, panelH, 14, lightTheme ? 0xEAF3F5F9 : 0xD00A101B);""")
+screen_text = screen_text.replace("Draw.round(c, left + 1, top + 1, panelW - 2, panelH - 2, 13, 0xC80D1421);",
+"""Draw.round(c, left + 1, top + 1, panelW - 2, panelH - 2, 13, lightTheme ? 0xDDFBFCFE : 0xC80D1421);""")
+screen_text = screen_text.replace("Draw.round(c, left + 8, top + 8, sideW, panelH - 16, 10, 0xC8172030);",
+"""Draw.round(c, left + 8, top + 8, sideW, panelH - 16, 10, lightTheme ? 0xDDE4EAF2 : 0xC8172030);""")
+screen_text = screen_text.replace("Draw.round(c, x, y, w, h, 9, 0xB51A2637);",
+"""Draw.round(c, x, y, w, h, 9, Config.get().theme == Theme.WHITE.ordinal() ? 0xDDE8EDF4 : 0xB51A2637);""")
+screen_text = screen_text.replace("Draw.round(c, x, y, w, h, 7, over ? 0xCC3B4C68 : 0xAA253247);",
+"""Draw.round(c, x, y, w, h, 7, Config.get().theme == Theme.WHITE.ordinal()
+                ? (over ? 0xFFDAE4EF : 0xE8E5EBF2)
+                : (over ? 0xCC3B4C68 : 0xAA253247));""")
+screen_text = screen_text.replace("Draw.round(c, x, y, 2, h, 1, th.accent);",
+"""Draw.round(c, x, y, 2, h, 1, th.accent);""")
+# Ensure the white preset has dark, readable card and button labels.
+screen_text = screen_text.replace("Draw.text(c, title, x + 14, y + 11, th.sub);",
+"""Draw.text(c, title, x + 14, y + 11, th.sub);""")
+screen.write_text(screen_text)
+
+# Accelerate the starfield dramatically and draw luminous multi-pixel motion trails.
+old_stars = r'''        long tick = System.currentTimeMillis() / 850L;
+        for (int i = 0; i < 105; i++) {
+            int x = Math.floorMod(i * 137 + (int)(tick * (i % 3 + 1)), Math.max(1, width));
+            int y = Math.floorMod(i * 83 + i * i * 3, Math.max(1, height));
+            int alpha = 90 + (int)((Math.sin((tick + i) * 0.7) + 1) * 65);
+            c.fill(x, y, x + 1, y + 1, (alpha << 24) | 0xDDEBFF);
+        }'''
+new_stars = r'''        double seconds = System.currentTimeMillis() / 1000.0;
+        int screenW = Math.max(1, width);
+        int screenH = Math.max(1, height);
+        for (int i = 0; i < 150; i++) {
+            double speed = 260.0 + (i % 11) * 92.0;
+            int x = Math.floorMod(i * 137 + (int)(seconds * speed), screenW);
+            int y = Math.floorMod(i * 83 + i * i * 3 + (int)(seconds * (18 + i % 5 * 7)), screenH);
+            int trail = 12 + (i % 9) * 3;
+            int tailX = Math.floorMod(x - trail, screenW);
+            int alpha = 105 + (int)((Math.sin(seconds * 7.0 + i) + 1.0) * 70.0);
+            int midAlpha = Math.max(25, alpha / 2);
+            // Three translucent segments create a soft, fast-moving motion-blur streak.
+            c.fill(tailX, y, Math.max(tailX + 1, x - trail / 2), y + 1, (Math.max(12, midAlpha / 2) << 24) | 0x99C9FF);
+            c.fill(Math.max(0, x - trail / 2), y, x, y + 1, (midAlpha << 24) | 0xC8E2FF);
+            c.fill(x, y, Math.min(screenW, x + 2), y + 2, (alpha << 24) | 0xF2FAFF);
+        }'''
+if old_stars not in screen_text:
+    raise RuntimeError("Could not find the existing starfield loop")
+screen_text = screen_text.replace(old_stars, new_stars, 1)
+screen.write_text(screen_text)
+
+# Update visible release labels and metadata.
+screen_text = screen.read_text().replace("BUILD  1.0.5", "BUILD  1.0.17")
+screen.write_text(screen_text)
+meta = root / "src/main/resources/fabric.mod.json"
+data = json.loads(meta.read_text())
+data["version"] = "1.0.17"
+data["name"] = "VØID Streamer Essentials"
+meta.write_text(json.dumps(data, indent=2) + chr(10))
+props = root / "gradle.properties"
+props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.17", props.read_text()))
