@@ -2752,10 +2752,6 @@ ledger.write_text(ledger_text)
 # Surface auction activity in the tracker overview's existing activity feed.
 screen = src / "SettingsScreen.java"
 screen_text = screen.read_text()
-screen_text = screen_text.replace(
-    "PaymentLedger.count() + \\" events recorded this session\\"",
-    "PaymentLedger.count() + \\" payments, transfers & auction events this session\\""
-)
 screen.write_text(screen_text)
 
 meta = root / "src/main/resources/fabric.mod.json"
