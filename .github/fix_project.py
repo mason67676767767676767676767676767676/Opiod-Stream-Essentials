@@ -2695,3 +2695,73 @@ s = s.replace("Style.EMPTY.withFont(\n                    Identifier.of(\"ninest
 s = s.replace("Style.EMPTY.withFont(Identifier.of(\"ninestyle\", \"default\"))",
               "Style.EMPTY.withFont(new net.minecraft.text.StyleSpriteSource.Font(Identifier.of(\"ninestyle\", \"default\")))")
 live.write_text(s)
+
+
+# VØID 1.0.20: classify outgoing/incoming transfers and auction settlements.
+ledger = src / "PaymentLedger.java"
+ledger_text = ledger.read_text()
+ledger_text = ledger_text.replace(
+'''if (!(low.contains("paid") || low.contains("received") || low.contains("sent you")
+                || low.contains("transferred") || low.contains("purchased") || low.contains("payment"))) return;''',
+'''if (!(low.contains("paid") || low.contains("received") || low.contains("sent you")
+                || low.contains("transferred") || low.contains("purchased") || low.contains("purchase")
+                || low.contains("payment") || low.contains("bought") || low.contains("you won")
+                || low.contains("won the auction") || low.contains("auction sale")
+                || low.contains("auction sold") || low.contains("auction purchase"))) return;'''
+)
+ledger_text = ledger_text.replace(
+'''boolean incoming = low.contains("paid you") || low.contains("received") || low.contains("sent you");
+        boolean outgoing = !incoming && (low.contains("you paid") || low.contains("you sent")
+                || low.contains("transferred") || low.contains("purchased") || low.contains("payment"));
+        if (!incoming && !outgoing) return;''',
+'''boolean auctionIncoming = low.contains("your auction") || low.contains("auction sold")
+                || low.contains("auction sale") || low.contains("you sold");
+        boolean auctionOutgoing = low.contains("you won") || low.contains("won the auction")
+                || low.contains("auction purchase") || low.contains("you bought")
+                || low.contains("bought ") || low.contains("purchased");
+        boolean incoming = auctionIncoming || low.contains("paid you") || low.contains("received")
+                || low.contains("sent you") || low.contains("you were paid");
+        boolean outgoing = !incoming && (auctionOutgoing || low.contains("you paid")
+                || low.contains("you sent") || low.contains("transferred") || low.contains("payment"));
+        if (!incoming && !outgoing) return;'''
+)
+ledger_text = ledger_text.replace(
+'''if (outgoing) {
+            lastOutgoingAt = now;
+            lastOutgoingAmount = amount;
+            add(new Entry("Payment sent", "To " + who, -amount, now, false, "CHAT"));
+        } else {
+            add(new Entry("Payment received", "From " + who, amount, now, true, "CHAT"));
+        }''',
+'''boolean auctionEvent = low.contains("auction") || low.contains("you won") || low.contains("won the auction");
+        if (outgoing) {
+            lastOutgoingAt = now;
+            lastOutgoingAmount = amount;
+            add(new Entry(auctionEvent ? "Auction purchase" : "Payment sent",
+                    auctionEvent ? "Won/bought auction item" : "To " + who,
+                    -amount, now, false, auctionEvent ? "AUCTION" : "CHAT"));
+        } else {
+            add(new Entry(auctionEvent ? "Auction sale" : "Payment received",
+                    auctionEvent ? "Auction proceeds" : "From " + who,
+                    amount, now, true, auctionEvent ? "AUCTION" : "CHAT"));
+        }'''
+)
+# Keep the transaction parser strict: a matching event must include a currency amount.
+ledger.write_text(ledger_text)
+
+# Surface auction activity in the tracker overview's existing activity feed.
+screen = src / "SettingsScreen.java"
+screen_text = screen.read_text()
+screen_text = screen_text.replace(
+    "PaymentLedger.count() + \\" events recorded this session\\"",
+    "PaymentLedger.count() + \\" payments, transfers & auction events this session\\""
+)
+screen.write_text(screen_text)
+
+meta = root / "src/main/resources/fabric.mod.json"
+data = json.loads(meta.read_text())
+data["version"] = "1.0.20"
+data["name"] = "VØID Streamer Essentials"
+meta.write_text(json.dumps(data, indent=2) + chr(10))
+props = root / "gradle.properties"
+props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.20", props.read_text()))
