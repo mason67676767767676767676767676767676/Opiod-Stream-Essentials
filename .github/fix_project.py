@@ -1807,3 +1807,148 @@ data["version"] = "1.0.14"
 meta.write_text(json.dumps(data, indent=2) + chr(10))
 props = root / "gradle.properties"
 props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.14", props.read_text()))
+
+
+# VØID 1.0.15: restore transaction-driven live balance tracking and use the
+# uploaded Atop typeface throughout VØID and the bundled auction screens.
+import io, urllib.request, zipfile, json, re
+from pathlib import Path
+
+font_url = "https://get.fontspace.co/download/family/edr7m/140f8b6dbd0f49b5ae8231f98be4a29c/atop-font.zip"
+request = urllib.request.Request(font_url, headers={"User-Agent": "Mozilla/5.0"})
+with urllib.request.urlopen(request, timeout=30) as response:
+    font_zip_bytes = response.read()
+with zipfile.ZipFile(io.BytesIO(font_zip_bytes)) as archive:
+    ttf_name = next((n for n in archive.namelist() if n.lower().endswith(".ttf")), None)
+    if not ttf_name:
+        raise RuntimeError("Atop font archive did not contain a TTF")
+    font_dir = root / "src/main/resources/assets/ninestyle/font"
+    font_dir.mkdir(parents=True, exist_ok=True)
+    (font_dir / "atop.ttf").write_bytes(archive.read(ttf_name))
+(font_dir / "default.json").write_text(json.dumps({
+    "providers": [{
+        "type": "ttf",
+        "file": "ninestyle:font/atop.ttf",
+        "shift": [0, 0],
+        "size": 10,
+        "oversample": 2
+    }]
+}, indent=2) + chr(10))
+
+draw = src / "Draw.java"
+draw_text = draw.read_text()
+if 'Identifier.of("ninestyle", "default")' not in draw_text:
+    draw_text = draw_text.replace("package com.ninestyle;", "package com.ninestyle;" + chr(10) +
+        "import net.minecraft.text.Style;" + chr(10) +
+        "import net.minecraft.util.Identifier;", 1)
+    draw_text = draw_text.replace("return Text.literal(s);",
+        'return Text.literal(s).setStyle(Style.EMPTY.withFont(Identifier.of("ninestyle", "default")));')
+if 'Identifier.of("ninestyle", "default")' not in draw_text:
+    raise RuntimeError("Could not apply Atop font to Draw.t")
+draw.write_text(draw_text)
+
+for java_file in (root / "src/main/java/com/donutauction").rglob("*.java"):
+    text_value = java_file.read_text()
+    text_value = text_value.replace("Text.literal(", "com.ninestyle.Draw.t(")
+    java_file.write_text(text_value)
+
+tracker = src / "BalanceTracker.java"
+tracker.write_text(r"""package com.ninestyle;
+
+import net.minecraft.client.MinecraftClient;
+
+public final class BalanceTracker {
+    private BalanceTracker() {}
+
+    public static double balance = 0d;
+    public static double startingBalance = 0d;
+    public static double previous = 0d;
+    public static double lastChange = 0d;
+
+    public static boolean hasData() {
+        return PaymentLedger.count() > 0;
+    }
+
+    public static void tick(MinecraftClient mc) {
+        // Live chat-event tracking only. This class never sends /bal.
+        if (mc.player == null || mc.getNetworkHandler() == null) {
+            balance = 0d;
+            startingBalance = 0d;
+            previous = 0d;
+            lastChange = 0d;
+        }
+    }
+
+    public static void recordPayment(double amount, boolean incoming) {
+        if (!Config.get().trackerEnabled || !(amount > 0d) || !Double.isFinite(amount)) return;
+        previous = balance;
+        lastChange = incoming ? amount : -amount;
+        balance += lastChange;
+    }
+
+    public static boolean onMessage(String msg, boolean overlay) {
+        return false;
+    }
+}
+""")
+
+ledger = src / "PaymentLedger.java"
+ledger_text = ledger.read_text()
+needle = "        if (outgoing) {"
+if "BalanceTracker.recordPayment(amount, incoming);" not in ledger_text:
+    if needle not in ledger_text:
+        raise RuntimeError("Could not find PaymentLedger event direction branch")
+    ledger_text = ledger_text.replace(needle,
+        "        BalanceTracker.recordPayment(amount, incoming);" + chr(10) + needle, 1)
+ledger.write_text(ledger_text)
+
+screen = src / "SettingsScreen.java"
+screen_text = screen.read_text()
+for old, new in [
+    ("Waiting for /bal", "Waiting for payment message"),
+    ("Waiting for first /bal response", "Waiting for payment message"),
+    ("Since first balance check", "Live chat payment net change"),
+    ("Since first /bal", "Live payment net"),
+    ("STARTING", "BASELINE"),
+    ("CURRENT", "LIVE NET"),
+    ("BALANCE POLLING", "LIVE BALANCE TRACKER"),
+    ("Checks /bal even while the HUD is hidden", "Reads payment messages directly — never sends /bal"),
+]:
+    screen_text = screen_text.replace(old, new)
+
+# Replace the legacy polling settings panel with a compact live-tracker panel.
+a = screen_text.find('    private void settingsPage(')
+if a >= 0:
+    b = screen_text.find('    private void card(', a)
+    if b < 0:
+        raise RuntimeError("Could not find end of settingsPage")
+    method = r'''    private void settingsPage(DrawContext c, Theme th, Config cfg, int y) {
+        card(c, contentX, y, contentW, 78, th, "LIVE BALANCE TRACKER",
+                "Reads payment messages directly — never sends /bal");
+        button(c, "track", contentX, y + 96, contentW, 34,
+                "Live tracker: " + (cfg.trackerEnabled ? "ON" : "OFF"), th,
+                () -> { cfg.trackerEnabled = !cfg.trackerEnabled; Config.save(); });
+        card(c, contentX, y + 146, contentW, 74, th, "TRACKING SOURCE",
+                "Confirmed incoming and outgoing payment messages in server chat");
+        card(c, contentX, y + 232, contentW, 58, th, "COMMAND",
+                "Type /opiod to open this dashboard");
+    }
+
+'''
+    screen_text = screen_text[:a] + method + screen_text[b:]
+screen.write_text(screen_text)
+
+hud = src / "BalanceHud.java"
+hud_text = hud.read_text()
+hud_text = hud_text.replace('"BALANCE CHANGE"', '"LIVE PAYMENT NET"')
+hud_text = hud_text.replace('"STARTING"', '"BASELINE"')
+hud_text = hud_text.replace('"CURRENT"', '"LIVE NET"')
+hud.write_text(hud_text)
+
+meta = root / "src/main/resources/fabric.mod.json"
+data = json.loads(meta.read_text())
+data["version"] = "1.0.15"
+data["name"] = "VØID Streamer Essentials"
+meta.write_text(json.dumps(data, indent=2) + chr(10))
+props = root / "gradle.properties"
+props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.15", props.read_text()))
