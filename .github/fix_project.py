@@ -2610,3 +2610,70 @@ data["name"] = "VØID Streamer Essentials"
 meta.write_text(json.dumps(data, indent=2) + chr(10))
 props = root / "gradle.properties"
 props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.19", props.read_text()))
+
+
+# 1.0.19 build corrections for the 1.21.11 input API and config field insertion.
+config = src / "Config.java"
+s = config.read_text()
+if "liveHudX" not in s:
+    s = s.replace("public int hudBg;", "public int liveHudX = 8;\n    public int liveHudY = 8;\n    public int hudBg;")
+config.write_text(s)
+
+live = src / "LiveBalanceHud.java"
+s = live.read_text()
+s = s.replace("net.minecraft.text.Text.literal", "Text.literal")
+s = s.replace("net.minecraft.text.Style.EMPTY", "Style.EMPTY")
+s = s.replace("net.minecraft.util.Identifier.of", "Identifier.of")
+if "import net.minecraft.text.Text;" not in s:
+    s = s.replace("import net.minecraft.client.gui.DrawContext;", "import net.minecraft.client.gui.DrawContext;\nimport net.minecraft.text.Text;\nimport net.minecraft.text.Style;\nimport net.minecraft.util.Identifier;")
+live.write_text(s)
+
+# Screen event signatures changed in 1.21.11; use the same GLFW polling approach
+# as the existing settings screen instead of overriding legacy mouse callbacks.
+(src / "HudPositionScreen.java").write_text(r'''package com.ninestyle;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.text.Text;
+import org.lwjgl.glfw.GLFW;
+
+public final class HudPositionScreen extends Screen {
+    private boolean wasDown = false;
+    private int drag = 0, ox, oy;
+    public HudPositionScreen() { super(Text.literal("VØID HUD POSITION")); }
+    private boolean down() {
+        return GLFW.glfwGetMouseButton(MinecraftClient.getInstance().getWindow().getHandle(),
+            GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS;
+    }
+    @Override public void render(DrawContext c, int mx, int my, float delta) {
+        Config cfg = Config.get();
+        boolean pressed = down();
+        if (pressed && !wasDown) {
+            int[] sz = BalanceHud.size(!BalanceTracker.hasData());
+            if (mx >= cfg.liveHudX && mx <= cfg.liveHudX + LiveBalanceHud.pillWidth()
+                    && my >= cfg.liveHudY && my <= cfg.liveHudY + 30) {
+                drag = 2; ox = mx - cfg.liveHudX; oy = my - cfg.liveHudY;
+            } else if (mx >= cfg.hudX && mx <= cfg.hudX + sz[0]
+                    && my >= cfg.hudY && my <= cfg.hudY + sz[1]) {
+                drag = 1; ox = mx - cfg.hudX; oy = my - cfg.hudY;
+            }
+        }
+        if (pressed && drag == 2) {
+            cfg.liveHudX = Math.max(0, Math.min(width - LiveBalanceHud.pillWidth(), mx - ox));
+            cfg.liveHudY = Math.max(0, Math.min(height - 30, my - oy));
+        } else if (pressed && drag == 1) {
+            int[] sz = BalanceHud.size(!BalanceTracker.hasData());
+            cfg.hudX = Math.max(0, Math.min(width - sz[0], mx - ox));
+            cfg.hudY = Math.max(0, Math.min(height - sz[1], my - oy));
+        }
+        if (!pressed && wasDown && drag != 0) { drag = 0; Config.save(); }
+        wasDown = pressed;
+        c.fill(0, 0, width, height, 0x99000000);
+        Draw.text(c, "DRAG EITHER HUD TO MOVE IT  •  ESC TO FINISH", 12, 12, 0xFFFFFFFF);
+        BalanceHud.draw(c, cfg.hudX, cfg.hudY, !BalanceTracker.hasData());
+        LiveBalanceHud.drawPreview(c, cfg.liveHudX, cfg.liveHudY);
+        super.render(c, mx, my, delta);
+    }
+    @Override public boolean shouldPause() { return false; }
+}
+''')
