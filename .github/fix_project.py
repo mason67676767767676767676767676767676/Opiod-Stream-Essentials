@@ -2435,3 +2435,178 @@ data["name"] = "VØID Streamer Essentials"
 meta.write_text(json.dumps(data, indent=2) + chr(10))
 props = root / "gradle.properties"
 props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.18", props.read_text()))
+
+
+# VØID 1.0.19: separate draggable HUD coordinates and editable auction duration.
+config = src / "Config.java"
+s = config.read_text()
+if "liveHudX" not in s:
+    s = s.replace("public int hudY;", "public int hudY;\n    public int liveHudX = 8;\n    public int liveHudY = 8;")
+config.write_text(s)
+
+live = src / "LiveBalanceHud.java"
+s = live.read_text()
+s = s.replace("cfg.hudX, screenW", "cfg.liveHudX, screenW").replace("cfg.hudY, screenH", "cfg.liveHudY, screenH")
+s = s.replace("Draw.text(context, label, labelX, textY, LABEL);",
+'''context.drawTextWithShadow(mc.textRenderer,
+                net.minecraft.text.Text.literal(label).setStyle(net.minecraft.text.Style.EMPTY.withFont(
+                    net.minecraft.util.Identifier.of("ninestyle", "default"))), labelX, textY, LABEL);''')
+s = s.replace("Draw.text(context, amount, dividerX + gap, textY, amountColor);",
+'''context.drawTextWithShadow(mc.textRenderer,
+                net.minecraft.text.Text.literal(amount).setStyle(net.minecraft.text.Style.EMPTY.withFont(
+                    net.minecraft.util.Identifier.of("ninestyle", "default"))), dividerX + gap, textY, amountColor);''')
+s = s.replace("0xE6101A27", "0x88101A27").replace("0xD9071422", "0x55071422")
+# Add a helper for previewing the pill at an arbitrary drag position.
+if "drawPreview(DrawContext" not in s:
+    insert = '''
+    public static int pillWidth() {
+        double start = BalanceTracker.startingBalance, current = BalanceTracker.balance;
+        boolean ready = !Double.isNaN(start) && !Double.isNaN(current);
+        double net = ready ? current - start : Double.NaN;
+        String amount = !ready ? "$--" : (net > 0 ? "+" : net < 0 ? "-" : "") + MoneyFmt.compact(Math.abs(net));
+        return Math.max(112, 22 + Draw.width("Live |") + 7 + Draw.width(amount));
+    }
+    public static int pillHeight() { return 30; }
+
+    public static void drawPreview(DrawContext c, int x, int y) {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        double start = BalanceTracker.startingBalance, current = BalanceTracker.balance;
+        boolean ready = !Double.isNaN(start) && !Double.isNaN(current);
+        double net = ready ? current - start : Double.NaN;
+        String amount = !ready ? "$--" : (net > 0 ? "+" : net < 0 ? "-" : "") + MoneyFmt.compact(Math.abs(net));
+        int color = !ready ? MUTED : net < 0 ? RED : net > 0 ? GREEN : MUTED;
+        int w = pillWidth(), h = pillHeight(), px = 11;
+        Draw.round(c, x, y, w, h, 9, 0x88101A27);
+        Draw.round(c, x + 1, y + 1, w - 2, h - 2, 8, 0x55071422);
+        Draw.round(c, x, y, w, 2, 1, BLUE);
+        Draw.round(c, x, y + h - 2, w, 2, 1, BLUE);
+        Draw.round(c, x, y + 5, 2, h - 10, 1, BLUE);
+        Draw.round(c, x + w - 2, y + 5, 2, h - 10, 1, BLUE);
+        int tx = x + px, ty = y + 10;
+        c.drawTextWithShadow(mc.textRenderer, net.minecraft.text.Text.literal("Live |").setStyle(
+            net.minecraft.text.Style.EMPTY.withFont(net.minecraft.util.Identifier.of("ninestyle", "default"))), tx, ty, LABEL);
+        int dx = tx + Draw.width("Live |") + 4;
+        Draw.round(c, dx, y + 7, 2, h - 14, 1, BLUE);
+        c.drawTextWithShadow(mc.textRenderer, net.minecraft.text.Text.literal(amount).setStyle(
+            net.minecraft.text.Style.EMPTY.withFont(net.minecraft.util.Identifier.of("ninestyle", "default"))), dx + 7, ty, color);
+    }
+
+'''
+    s = s.replace("    public static void render(DrawContext context) {", insert + "    public static void render(DrawContext context) {")
+live.write_text(s)
+
+(src / "HudPositionScreen.java").write_text(r'''package com.ninestyle;
+import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.text.Text;
+
+public final class HudPositionScreen extends Screen {
+    private int drag = 0, ox, oy;
+    public HudPositionScreen() { super(Text.literal("VØID HUD POSITION")); }
+    @Override public void render(DrawContext c, int mx, int my, float delta) {
+        Config cfg = Config.get();
+        c.fill(0, 0, width, height, 0x99000000);
+        Draw.text(c, "DRAG EITHER HUD TO MOVE IT  •  ESC TO FINISH", 12, 12, 0xFFFFFFFF);
+        int[] sz = BalanceHud.size(!BalanceTracker.hasData());
+        BalanceHud.draw(c, cfg.hudX, cfg.hudY, !BalanceTracker.hasData());
+        LiveBalanceHud.drawPreview(c, cfg.liveHudX, cfg.liveHudY);
+        super.render(c, mx, my, delta);
+    }
+    @Override public boolean mouseClicked(double x, double y, int b) {
+        if (b != 0) return super.mouseClicked(x, y, b);
+        int[] sz = BalanceHud.size(!BalanceTracker.hasData());
+        if (x >= Config.get().liveHudX && x <= Config.get().liveHudX + LiveBalanceHud.pillWidth()
+                && y >= Config.get().liveHudY && y <= Config.get().liveHudY + 30) {
+            drag = 2; ox = (int)x - Config.get().liveHudX; oy = (int)y - Config.get().liveHudY; return true;
+        }
+        if (x >= Config.get().hudX && x <= Config.get().hudX + sz[0]
+                && y >= Config.get().hudY && y <= Config.get().hudY + sz[1]) {
+            drag = 1; ox = (int)x - Config.get().hudX; oy = (int)y - Config.get().hudY; return true;
+        }
+        return super.mouseClicked(x, y, b);
+    }
+    @Override public boolean mouseDragged(double x, double y, int b, double dx, double dy) {
+        if (b != 0 || drag == 0) return super.mouseDragged(x, y, b, dx, dy);
+        Config cfg = Config.get();
+        if (drag == 2) {
+            cfg.liveHudX = Math.max(0, Math.min(width - LiveBalanceHud.pillWidth(), (int)x - ox));
+            cfg.liveHudY = Math.max(0, Math.min(height - 30, (int)y - oy));
+        } else {
+            int[] sz = BalanceHud.size(!BalanceTracker.hasData());
+            cfg.hudX = Math.max(0, Math.min(width - sz[0], (int)x - ox));
+            cfg.hudY = Math.max(0, Math.min(height - sz[1], (int)y - oy));
+        }
+        return true;
+    }
+    @Override public boolean mouseReleased(double x, double y, int b) {
+        if (b == 0 && drag != 0) { drag = 0; Config.save(); return true; }
+        return super.mouseReleased(x, y, b);
+    }
+    @Override public boolean shouldPause() { return false; }
+}
+''')
+
+client = src / "NineStyleClient.java"
+s = client.read_text()
+s = s.replace("(context, tickCounter) -> LiveBalanceHud.render(context)",
+              "(context, tickCounter) -> { BalanceHud.render(context); LiveBalanceHud.render(context); }")
+if 'literal("movehud")' not in s:
+    s = s.replace('dispatcher.register(ClientCommandManager.literal("opiod").executes(ctx -> {',
+'''dispatcher.register(ClientCommandManager.literal("movehud").executes(ctx -> {
+                MinecraftClient mc = MinecraftClient.getInstance();
+                mc.send(() -> mc.setScreen(new HudPositionScreen()));
+                return 1;
+            }));
+            dispatcher.register(ClientCommandManager.literal("opiod").executes(ctx -> {''')
+client.write_text(s)
+
+# Fix auction duration units: startAuction(seconds) internally multiplies by 1000.
+screen = src / "SettingsScreen.java"
+s = screen.read_text()
+s = s.replace("long[] durations = {60000L, 180000L, 300000L, 600000L};",
+              "long[] durations = {60L, 180L, 300L, 600L};")
+s = s.replace('String[] durationLabels = {"1 MIN", "3 MIN", "5 MIN", "10 MIN"};',
+              'String[] durationLabels = {"60 SEC", "180 SEC", "300 SEC", "600 SEC"};')
+# Replace cycling preset with a typed seconds field.
+if "auctionDurationInput" not in s:
+    s = s.replace("private int auctionDurationChoice = 1;",
+                  'private int auctionDurationChoice = 1;\n    private String auctionDurationInput = "60";\n    private boolean auctionDurationFocused = false;')
+s = s.replace('"TIME: " + durationLabels[Math.floorMod(auctionDurationChoice, durations.length)]',
+              '"TIME SEC: " + auctionDurationInput + (auctionDurationFocused ? "_" : "")')
+s = s.replace("() -> auctionDurationChoice = (auctionDurationChoice + 1) % durations.length",
+              "() -> auctionDurationFocused = true")
+s = s.replace("durations[Math.floorMod(auctionDurationChoice, durations.length)]",
+              "Math.max(1L, Math.min(86400L, Long.parseLong(auctionDurationInput.isEmpty() ? \"60\" : auctionDurationInput)))")
+# Existing 1.21.11 input handlers: insert numeric typing and backspace handling.
+needle = "    public boolean charTyped(net.minecraft.client.input.CharInput input) {"
+if needle in s and "if (auctionDurationFocused && Character.isDigit" not in s:
+    s = s.replace(needle, needle + '''
+        if (page.equals("Auction") && auctionDurationFocused) {
+            char ch = (char) input.codepoint();
+            if (Character.isDigit(ch) && auctionDurationInput.length() < 5) auctionDurationInput += ch;
+            return true;
+        }
+''')
+needle = "    public boolean keyPressed(net.minecraft.client.input.KeyInput input) {"
+if needle in s and "auctionDurationInput.substring" not in s:
+    s = s.replace(needle, needle + '''
+        if (page.equals("Auction") && auctionDurationFocused) {
+            if (input.key() == org.lwjgl.glfw.GLFW.GLFW_KEY_BACKSPACE) {
+                if (!auctionDurationInput.isEmpty()) auctionDurationInput = auctionDurationInput.substring(0, auctionDurationInput.length() - 1);
+                return true;
+            }
+            if (input.key() == org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER || input.key() == org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE) {
+                auctionDurationFocused = false;
+                return true;
+            }
+        }
+''')
+screen.write_text(s)
+
+meta = root / "src/main/resources/fabric.mod.json"
+data = json.loads(meta.read_text())
+data["version"] = "1.0.19"
+data["name"] = "VØID Streamer Essentials"
+meta.write_text(json.dumps(data, indent=2) + chr(10))
+props = root / "gradle.properties"
+props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.19", props.read_text()))
