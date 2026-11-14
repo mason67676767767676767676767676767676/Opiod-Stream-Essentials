@@ -2346,3 +2346,92 @@ handlers = r'''    @Override
 
 '''
 screen.write_text(screen_text[:start] + handlers + screen_text[end:])
+
+
+# VØID 1.0.18: restore the original compact LIVE balance pill HUD.
+live_hud = src / "LiveBalanceHud.java"
+live_hud.write_text(r'''package com.ninestyle;
+
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.DrawContext;
+
+/** Compact transparent LIVE balance/net-change indicator. */
+public final class LiveBalanceHud {
+    private LiveBalanceHud() {}
+
+    private static final int BLUE = 0xFF36A9FF;
+    private static final int LABEL = 0xFF83C9FF;
+    private static final int RED = 0xFFFF555D;
+    private static final int GREEN = 0xFF58E69A;
+    private static final int MUTED = 0xFFB7C6D8;
+
+    public static void render(DrawContext context) {
+        MinecraftClient mc = MinecraftClient.getInstance();
+        Config cfg = Config.get();
+        if (!cfg.hudEnabled || mc.options.hudHidden || mc.player == null) return;
+        if (mc.currentScreen instanceof SettingsScreen) return;
+
+        double start = BalanceTracker.startingBalance;
+        double current = BalanceTracker.balance;
+        boolean ready = !Double.isNaN(start) && !Double.isNaN(current);
+        double net = ready ? current - start : Double.NaN;
+
+        String amount;
+        int amountColor;
+        if (!ready) {
+            amount = "$--";
+            amountColor = MUTED;
+        } else {
+            amount = (net > 0 ? "+" : net < 0 ? "-" : "") + MoneyFmt.compact(Math.abs(net));
+            amountColor = net < 0 ? RED : net > 0 ? GREEN : MUTED;
+        }
+
+        String label = "Live |";
+        int padX = 11;
+        int height = 30;
+        int gap = 7;
+        int width = padX * 2 + Draw.width(label) + gap + Draw.width(amount);
+        width = Math.max(112, width);
+
+        int screenW = mc.getWindow().getScaledWidth();
+        int screenH = mc.getWindow().getScaledHeight();
+        int x = Math.max(4, Math.min(cfg.hudX, screenW - width - 4));
+        int y = Math.max(4, Math.min(cfg.hudY, screenH - height - 4));
+
+        // Transparent dark glass fill with a crisp double blue outline.
+        Draw.round(context, x, y, width, height, 9, 0xE6101A27);
+        Draw.round(context, x + 1, y + 1, width - 2, height - 2, 8, 0xD9071422);
+        Draw.round(context, x, y, width, 2, 1, BLUE);
+        Draw.round(context, x, y + height - 2, width, 2, 1, BLUE);
+        Draw.round(context, x, y + 5, 2, height - 10, 1, BLUE);
+        Draw.round(context, x + width - 2, y + 5, 2, height - 10, 1, BLUE);
+
+        int textY = y + 10;
+        int labelX = x + padX;
+        Draw.text(context, label, labelX, textY, LABEL);
+        int dividerX = labelX + Draw.width(label) + 4;
+        Draw.round(context, dividerX, y + 7, 2, height - 14, 1, BLUE);
+        Draw.text(context, amount, dividerX + gap, textY, amountColor);
+    }
+}
+''')
+
+# Replace the former multi-card balance HUD with the compact LIVE pill.
+client = src / "NineStyleClient.java"
+client_text = client.read_text()
+client_text = client_text.replace(
+    '(context, tickCounter) -> BalanceHud.render(context)',
+    '(context, tickCounter) -> LiveBalanceHud.render(context)'
+)
+if 'LiveBalanceHud.render(context)' not in client_text:
+    raise RuntimeError("Could not wire compact LIVE balance HUD")
+client.write_text(client_text)
+
+# Version metadata.
+meta = root / "src/main/resources/fabric.mod.json"
+data = json.loads(meta.read_text())
+data["version"] = "1.0.18"
+data["name"] = "VØID Streamer Essentials"
+meta.write_text(json.dumps(data, indent=2) + chr(10))
+props = root / "gradle.properties"
+props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.18", props.read_text()))
