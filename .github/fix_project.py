@@ -2299,3 +2299,50 @@ data["name"] = "VØID Streamer Essentials"
 meta.write_text(json.dumps(data, indent=2) + chr(10))
 props = root / "gradle.properties"
 props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.17", props.read_text()))
+
+
+
+# Correct Minecraft 1.21.11 structured input callbacks for the embedded auction search.
+screen = src / "SettingsScreen.java"
+screen_text = screen.read_text()
+start = screen_text.find("    @Override\n    public boolean charTyped(char chr, int modifiers)")
+if start < 0:
+    raise RuntimeError("Legacy charTyped handler not found")
+end_marker = "    @Override public boolean shouldPause()"
+end = screen_text.find(end_marker, start)
+if end < 0:
+    raise RuntimeError("Could not locate end of auction input handlers")
+handlers = r'''    @Override
+    public boolean charTyped(net.minecraft.client.input.CharInput input) {
+        char chr = (char) input.codepoint();
+        if (page.equals("Auction") && auctionSearchFocused && !Character.isISOControl(chr)) {
+            if (auctionSearch.length() < 48) auctionSearch += chr;
+            auctionScroll = 0;
+            return true;
+        }
+        return super.charTyped(input);
+    }
+
+    @Override
+    public boolean keyPressed(net.minecraft.client.input.KeyInput input) {
+        int keyCode = input.key();
+        if (page.equals("Auction") && auctionSearchFocused) {
+            if (keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_BACKSPACE) {
+                if (!auctionSearch.isEmpty()) auctionSearch = auctionSearch.substring(0, auctionSearch.length() - 1);
+                auctionScroll = 0;
+                return true;
+            }
+            if (keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER || keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE) {
+                auctionSearchFocused = false;
+                return true;
+            }
+        }
+        if (page.equals("Auction")) {
+            if (keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_DOWN) { auctionScroll += 2; return true; }
+            if (keyCode == org.lwjgl.glfw.GLFW.GLFW_KEY_UP) { auctionScroll = Math.max(0, auctionScroll - 2); return true; }
+        }
+        return super.keyPressed(input);
+    }
+
+'''
+screen.write_text(screen_text[:start] + handlers + screen_text[end:])
