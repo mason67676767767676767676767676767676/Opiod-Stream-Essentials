@@ -1964,3 +1964,41 @@ draw_text = draw_text.replace(
     'Style.EMPTY.withFont(new StyleSpriteSource.Font(Identifier.of("ninestyle", "default")))'
 )
 draw.write_text(draw_text)
+
+
+# VØID 1.0.16 font fix:
+# TTF provider file paths are relative to assets/<namespace>/font/, so
+# "ninestyle:font/atop.ttf" incorrectly looked in font/font/atop.ttf.
+# Add vanilla's font providers as a fallback for symbols outside Atop's glyph set.
+font_dir = root / "src/main/resources/assets/ninestyle/font"
+font_dir.mkdir(parents=True, exist_ok=True)
+(font_dir / "default.json").write_text(json.dumps({
+    "providers": [
+        {
+            "type": "ttf",
+            "file": "ninestyle:atop.ttf",
+            "shift": [0, 0],
+            "size": 10,
+            "oversample": 2
+        },
+        {
+            "type": "reference",
+            "id": "minecraft:default"
+        }
+    ]
+}, indent=2) + chr(10))
+
+# Ensure all dashboard text uses the corrected custom font identifier.
+draw = src / "Draw.java"
+draw_text = draw.read_text()
+if 'Identifier.of("ninestyle", "default")' not in draw_text:
+    raise RuntimeError("VØID Draw.t is missing the custom font reference")
+draw.write_text(draw_text)
+
+meta = root / "src/main/resources/fabric.mod.json"
+data = json.loads(meta.read_text())
+data["version"] = "1.0.16"
+data["name"] = "VØID Streamer Essentials"
+meta.write_text(json.dumps(data, indent=2) + chr(10))
+props = root / "gradle.properties"
+props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.16", props.read_text()))
