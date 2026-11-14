@@ -2677,3 +2677,21 @@ public final class HudPositionScreen extends Screen {
     @Override public boolean shouldPause() { return false; }
 }
 ''')
+
+
+# Final compatibility fixes: Config stores HUD coordinates alongside its singleton,
+# and Minecraft 1.21.11 uses StyleSpriteSource.Font for custom font identifiers.
+config = src / "Config.java"
+s = config.read_text()
+if "liveHudX" not in s:
+    s = s.replace("private static Config inst;",
+        "public int liveHudX = 8;\n    public int liveHudY = 8;\n    private static Config inst;")
+config.write_text(s)
+
+live = src / "LiveBalanceHud.java"
+s = live.read_text()
+s = s.replace("Style.EMPTY.withFont(\n                    Identifier.of(\"ninestyle\", \"default\"))",
+              "Style.EMPTY.withFont(new net.minecraft.text.StyleSpriteSource.Font(\n                    Identifier.of(\"ninestyle\", \"default\")))")
+s = s.replace("Style.EMPTY.withFont(Identifier.of(\"ninestyle\", \"default\"))",
+              "Style.EMPTY.withFont(new net.minecraft.text.StyleSpriteSource.Font(Identifier.of(\"ninestyle\", \"default\")))")
+live.write_text(s)
