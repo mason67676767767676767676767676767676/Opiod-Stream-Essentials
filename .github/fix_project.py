@@ -1952,3 +1952,15 @@ data["name"] = "VØID Streamer Essentials"
 meta.write_text(json.dumps(data, indent=2) + chr(10))
 props = root / "gradle.properties"
 props.write_text(re.sub(r"(?m)^mod_version=.*$", "mod_version=1.0.15", props.read_text()))
+
+
+# Minecraft 1.21.11 represents font references as StyleSpriteSource.Font.
+draw = src / "Draw.java"
+draw_text = draw.read_text()
+if "import net.minecraft.text.StyleSpriteSource;" not in draw_text:
+    draw_text = draw_text.replace("import net.minecraft.text.Style;", "import net.minecraft.text.Style;" + chr(10) + "import net.minecraft.text.StyleSpriteSource;")
+draw_text = draw_text.replace(
+    'Style.EMPTY.withFont(Identifier.of("ninestyle", "default"))',
+    'Style.EMPTY.withFont(new StyleSpriteSource.Font(Identifier.of("ninestyle", "default")))'
+)
+draw.write_text(draw_text)
